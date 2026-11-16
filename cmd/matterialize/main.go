@@ -14,6 +14,7 @@ import (
 	"github.com/duncanite/matterialize/internal/config"
 	"github.com/duncanite/matterialize/internal/daemon"
 	"github.com/duncanite/matterialize/plugin"
+	"github.com/duncanite/matterialize/plugin/lutron"
 )
 
 // errUsage is the daemon asked wrongly.
@@ -22,7 +23,7 @@ var errUsage = errors.New("usage: matterialize CONFIG")
 // makers is the plugins this build has, by the name the configuration
 // enables each under.
 func makers() map[string]plugin.Maker {
-	return map[string]plugin.Maker{}
+	return map[string]plugin.Maker{"lutron": lutron.New}
 }
 
 func main() {

@@ -26,9 +26,11 @@ var ErrSettings = errors.New("the plugin's settings are not valid")
 type Plugin interface {
 	// Run puts the maker's devices into home and keeps them as the maker
 	// says they are: their state reported as it changes, a device that
-	// went or came put or removed. It returns nil when ctx ends, having
-	// let go of the maker; and an error when the maker is lost for good,
-	// which ends the daemon.
+	// went or came put or removed. A maker that cannot be reached for a
+	// while is Run's to wait for and reach again, its devices reported
+	// unreachable meanwhile. It returns nil when ctx ends, having let go
+	// of the maker; and an error only for what it cannot come back
+	// from, which ends the daemon.
 	Run(ctx context.Context, home *matter.Home) error
 }
 

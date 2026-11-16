@@ -5,8 +5,7 @@ A daemon that makes the devices of a home that do not speak
 bridge, behind which each maker's devices appear to any Matter controller that is
 invited to it, whatever its ecosystem, several at once.
 
-The daemon is built, and no plugin yet: it runs what its configuration enables, and this
-build has nothing to enable.
+The daemon is built, with one plugin: [Lutron Caséta](#lutron).
 
 ```bash
 matterialize /etc/matterialize/config.yaml
@@ -31,8 +30,8 @@ secrets: /etc/matterialize/secrets
 # The plugins that are enabled, by name, each with its own settings. A plugin that
 # is not named does not run.
 plugins:
-  example:
-    setting: value
+  lutron:
+    host: 192.0.2.20
 ```
 
 A key the daemon or a plugin does not know is refused, with where it is: a misspelt key
@@ -49,8 +48,46 @@ secrets, by a name its settings give, and passwords from the environment.
 - **A plugin for each maker**, compiled in and enabled by the configuration, read once
   at the start. A plugin turns its maker's devices into Matter ones and does nothing
   else.
-- **A plugin that ends is the end of the daemon**, with why: half a home is not served
-  in silence. What runs the daemon starts it again.
+- **A maker that goes away is its plugin's to wait for**: its devices are unreachable
+  until it is back, and the rest of the home is served. A plugin ends only for what it
+  cannot come back from, and that is the end of the daemon, with why.
+
+## The plugins
+
+### Lutron
+
+The zones of one Caséta bridge. A dimmer is a light with a level, a switch a light
+without, and one that is plugged in or outdoors a plug; each keeps the name, the room,
+the model and the serial number the bridge has for it. Nothing else is served, whatever
+level it has: a shade or a fan is not a lamp. A zone the bridge says no level of is left
+out.
+
+```yaml
+plugins:
+  lutron:
+    # The Caséta bridge, by address or name; with a port, or LEAP's own.
+    host: 192.0.2.20
+    # The credentials that pairing with the bridge gave, by the name of their
+    # directory among the secrets. Left out, "lutron".
+    credentials: lutron
+    # How long before a bridge that is not there is reached for again. Left
+    # out, ten seconds.
+    retry: 10s
+```
+
+The credentials are what [go-lutron](https://github.com/duncanite/go-lutron)'s `lutron
+pair` writes: `key.pem`, `certificate.pem` and `root.pem` in one directory. The plugin
+does not pair.
+
+A device switched on comes back to the level it last had; one that was off when it was
+first seen comes back to full, the bridge not saying where it stood.
+
+**A Caséta bridge that goes away does not end the daemon.** Its devices are unreachable
+to every controller, as Matter has a bridged device be, until the bridge answers again;
+the other plugins go on. When it answers, its devices are as it then says: in the state
+they have, the ones it no longer has gone, the ones it gained there. That is also when a
+device added to the bridge or taken from it is seen: the bridge's list is read when the
+connection is made, and not again while it lasts.
 
 It is built on [go-matter](https://github.com/duncanite/go-matter), which is the
 vocabulary of devices and the bridge itself.
