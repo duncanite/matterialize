@@ -18,9 +18,10 @@ var ErrInvalid = errors.New("the configuration is not valid")
 type Config struct {
 	// Bridge is the Matter bridge the daemon is.
 	Bridge Bridge `yaml:"bridge"`
-	// Secrets is a directory of key material for the plugins. It may be
-	// left out when no plugin that is enabled reads one.
-	Secrets string `yaml:"secrets"`
+	// Store is the directory the daemon keeps in what its plugins give
+	// it to keep: the credentials a pairing gave. It is secret. It may
+	// be left out when no plugin that is enabled keeps anything.
+	Store string `yaml:"store"`
 	// Plugins is the plugins that are enabled, by name, each with its
 	// settings as that plugin reads them. A plugin that is not named
 	// does not run.

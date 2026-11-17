@@ -7,27 +7,40 @@
 //	lutron:
 //	  # The Caséta bridge, by address or name; with a port, or LEAP's.
 //	  host: 192.0.2.20
-//	  # The credentials pairing with it gave, by the name of their
-//	  # directory among the secrets. Left out, "lutron".
-//	  credentials: lutron
+//	  # Where the bridge takes a pairing, when that is not the same host
+//	  # on the pairing port.
+//	  pairing: 192.0.2.20:8083
 //	  # How long before a bridge that is not there is reached for again.
 //	  # Left out, ten seconds.
 //	  retry: 10s
+//
+// The plugin pairs with the bridge by itself, the first time it runs: it
+// says so in the log, and waits for the button on the bridge to be
+// pressed. What the pairing gave is kept in the plugin's store as
+// "credentials": the key, the certificate the bridge signed and the
+// bridge's root, three PEM blocks in that order. With it taken out of the
+// store, the plugin pairs again; with a pairing made elsewhere put there,
+// it does not pair at all.
+//
+// A pairing port that wants another identity than Lutron's Caséta app's
+// is given it the same way, kept as "app".
 package lutron
 
 import (
 	"context"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
 	"math"
+	"net"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
 
 	"github.com/duncanite/go-lutron/caseta"
-	"github.com/duncanite/go-lutron/credentials"
 	"github.com/duncanite/go-lutron/leap"
 	"github.com/duncanite/go-matter"
 
@@ -41,18 +54,31 @@ const full = 100
 // bridge it lost, or could not reach, when its settings do not say.
 const again = 10 * time.Second
 
+// What the plugin keeps in its store, and how it is called on the bridge
+// it pairs with.
+const (
+	credentials = "credentials"
+	app         = "app"
+	client      = "matterialize"
+)
+
+// errStored is what the store holds that is not the three PEM blocks of
+// an identity.
+var errStored = errors.New("not three PEM blocks: a key, a certificate and a root")
+
 // settings is the plugin's, as the configuration writes them.
 type settings struct {
-	Host        string `yaml:"host"`
-	Credentials string `yaml:"credentials"`
-	Retry       string `yaml:"retry"`
+	Host    string `yaml:"host"`
+	Pairing string `yaml:"pairing"`
+	Retry   string `yaml:"retry"`
 }
 
 // served is the plugin, made.
 type served struct {
-	host     string
-	identity *leap.Credentials
-	retry    time.Duration
+	host    string
+	pairing string
+	store   plugin.Store
+	retry   time.Duration
 
 	// bridge is the connection to the Caséta bridge a device's commands
 	// are sent on: the last one made, set before any device is put. One
@@ -67,7 +93,7 @@ type served struct {
 // New makes the plugin from its settings: it is the Maker to enable
 // under the name "lutron".
 func New(given plugin.Settings) (plugin.Plugin, error) {
-	read := settings{Credentials: "lutron"}
+	var read settings
 
 	if err := given.Decode(&read); err != nil {
 		return nil, fmt.Errorf("its settings: %w", err)
@@ -87,17 +113,22 @@ func New(given plugin.Settings) (plugin.Plugin, error) {
 		}
 	}
 
-	dir, err := given.Secrets.Path(read.Credentials)
-	if err != nil {
-		return nil, err
+	pairing := read.Pairing
+
+	if pairing == "" {
+		name := read.Host
+
+		// The pairing port is the same host's, whatever port LEAP is asked on.
+		if alone, _, err := net.SplitHostPort(name); err == nil {
+			name = alone
+		}
+
+		pairing = net.JoinHostPort(strings.Trim(name, "[]"), leap.PairingPort)
 	}
 
-	identity, err := credentials.Load(dir)
-	if err != nil {
-		return nil, fmt.Errorf("%w: the credentials: %w", plugin.ErrSettings, err)
-	}
-
-	return &served{host: read.Host, identity: identity, retry: retry, put: map[string]bool{}}, nil
+	return &served{
+		host: read.Host, pairing: pairing, store: given.Store, retry: retry, put: map[string]bool{},
+	}, nil
 }
 
 // Run is Plugin's. It ends with ctx and with nothing else: a Caséta
@@ -131,11 +162,91 @@ func (s *served) Run(ctx context.Context, home *matter.Home) error {
 	}
 }
 
+// identity is what the Caséta bridge lets the plugin in under: what the
+// store holds, and, when it holds nothing, what a pairing gives.
+func (s *served) identity(ctx context.Context) (*leap.Credentials, error) {
+	held, err := s.kept(ctx, credentials)
+	if held != nil || err != nil {
+		return held, err
+	}
+
+	under, err := s.kept(ctx, app)
+	if err != nil {
+		return nil, err
+	}
+
+	if under == nil {
+		under = leap.CasetaApp()
+	}
+
+	config, err := leap.TLSConfig(under)
+	if err != nil {
+		return nil, fmt.Errorf("the identity to pair under: %w", err)
+	}
+
+	conn, err := leap.DialTLS(ctx, s.pairing, config)
+	if err != nil {
+		return nil, fmt.Errorf("pairing with the Caséta bridge: %w", err)
+	}
+
+	given, err := leap.Pair(ctx, conn, client, func() {
+		slog.WarnContext(
+			ctx, "not paired with the Caséta bridge yet: press the button on the back of it", "bridge", s.pairing,
+		)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("pairing with the Caséta bridge: %w", err)
+	}
+
+	// A pairing that is not kept is asked for again at every start, and
+	// leaves one more client on the bridge each time: it is no pairing.
+	sealed := slices.Concat(given.Key, given.Certificate, given.Root)
+	if err = s.store.Put(ctx, credentials, sealed); err != nil {
+		return nil, fmt.Errorf("keeping the pairing: %w", err)
+	}
+
+	slog.InfoContext(ctx, "paired with the Caséta bridge", "bridge", s.pairing)
+
+	return given, nil
+}
+
+// kept is an identity the store holds under a name, and nil when it
+// holds nothing there.
+func (s *served) kept(ctx context.Context, name string) (*leap.Credentials, error) {
+	held, err := s.store.Get(ctx, name)
+	if errors.Is(err, plugin.ErrNotStored) {
+		return nil, nil //nolint:nilnil // nothing kept is no error, and no identity
+	}
+
+	if err != nil {
+		return nil, fmt.Errorf("reading %s from the store: %w", name, err)
+	}
+
+	var blocks [3][]byte
+
+	for index := range blocks {
+		var block *pem.Block
+
+		if block, held = pem.Decode(held); block == nil {
+			return nil, fmt.Errorf("what the store holds as %s: %w", name, errStored)
+		}
+
+		blocks[index] = pem.EncodeToMemory(block)
+	}
+
+	return &leap.Credentials{Key: blocks[0], Certificate: blocks[1], Root: blocks[2]}, nil
+}
+
 // connected is one connection to the Caséta bridge, from its opening to
 // its end: the home brought to what the bridge says, and kept so. It
 // returns why the connection ended.
 func (s *served) connected(ctx context.Context, home *matter.Home) error {
-	bridge, err := caseta.Open(ctx, s.host, s.identity)
+	identity, err := s.identity(ctx)
+	if err != nil {
+		return err
+	}
+
+	bridge, err := caseta.Open(ctx, s.host, identity)
 	if err != nil {
 		return fmt.Errorf("opening the Caséta bridge: %w", err)
 	}
@@ -144,72 +255,89 @@ func (s *served) connected(ctx context.Context, home *matter.Home) error {
 
 	defer func() { _ = bridge.Close() }()
 
-	if err = s.feed(ctx, bridge, home); err != nil {
-		return err
+	return s.watch(ctx, bridge, home)
+}
+
+// watch brings the home to the Caséta bridge's zones as they stand, and
+// keeps it so for as long as the connection lasts: a zone the plugin had
+// not put is put, one it had is said reachable again and as it stands,
+// one the bridge no longer has is removed, and from then on what the
+// bridge says of each is reported. It returns why the watch ended.
+func (s *served) watch(ctx context.Context, bridge *caseta.Bridge, home *matter.Home) error {
+	// drives is each zone of a kind the plugin serves, with the device
+	// that drives it.
+	drives := map[string]caseta.Device{}
+
+	// A zone that cannot be placed ends the watch: a home that stays as it
+	// was while the bridge goes on is worse than one reached for again.
+	watching, stop := context.WithCancelCause(ctx)
+	defer stop(nil)
+
+	err := bridge.Watch(watching, func(event caseta.Event) {
+		switch said := event.(type) {
+		case caseta.Device:
+			list(ctx, drives, said)
+		case caseta.Settled:
+			s.forget(home, drives)
+		case caseta.ZoneStatus:
+			if failed := s.told(ctx, home, drives, said); failed != nil {
+				stop(failed)
+			}
+		default:
+		}
+	})
+
+	return fmt.Errorf("watching the Caséta bridge: %w", err)
+}
+
+// list notes the zones a device drives, when it is of a kind the plugin
+// serves.
+func list(ctx context.Context, drives map[string]caseta.Device, device caseta.Device) {
+	if _, known := kindOf(device.DeviceType); known {
+		for _, driven := range device.LocalZones {
+			drives[driven.ID()] = device
+		}
+
+		return
 	}
 
-	select {
-	case <-ctx.Done():
-		return nil
-	case <-bridge.Conn().Done():
-		return fmt.Errorf("the connection ended: %w", bridge.Conn().Err())
+	if len(device.LocalZones) > 0 {
+		slog.InfoContext(ctx, "a device is left out: not a kind this plugin serves",
+			"device", device.Name, "kind", device.DeviceType)
 	}
 }
 
-// feed brings the home to the Caséta bridge's zones as they are now:
-// one it had not put is put, one it had is said reachable again and as
-// it stands, and one the bridge no longer has is removed. From then on
-// what the bridge says of them is reported.
-func (s *served) feed(ctx context.Context, bridge *caseta.Bridge, home *matter.Home) error {
-	devices, err := bridge.Devices(ctx)
-	if err != nil {
-		return fmt.Errorf("listing the Lutron devices: %w", err)
+// told is what the Caséta bridge says a zone is at, the first time and
+// every time after, whoever changed it.
+func (s *served) told(
+	ctx context.Context,
+	home *matter.Home,
+	drives map[string]caseta.Device,
+	status caseta.ZoneStatus,
+) error {
+	zone := status.Zone.ID()
+
+	device, ours := drives[zone]
+	if !ours {
+		return nil
 	}
 
-	// found is the zones served on this connection, and whether each has
-	// a level.
-	found := map[string]bool{}
+	if status.Level == nil {
+		slog.WarnContext(ctx, "the bridge gives a zone no level", "zone", zone, "device", device.Name)
 
-	for index := range devices {
-		device := &devices[index]
-
-		dimmable, known := kindOf(device.DeviceType)
-		if !known && len(device.LocalZones) > 0 {
-			slog.InfoContext(ctx, "a device is left out: not a kind this plugin serves",
-				"device", device.Name, "kind", device.DeviceType)
-
-			continue
-		}
-
-		for _, driven := range device.LocalZones {
-			zone := driven.ID()
-
-			status, err := bridge.Zone(ctx, zone)
-			if err != nil || status.Level == nil {
-				slog.WarnContext(ctx, "a zone is left out", "zone", zone, "device", device.Name, "error", err)
-
-				continue
-			}
-
-			if err = s.place(home, device, zone, dimmable, *status.Level); err != nil {
-				return err
-			}
-
-			found[zone] = dimmable
-		}
+		return nil
 	}
 
-	s.forget(home, found)
-	bridge.WatchZones(func(changed caseta.ZoneStatus) { said(ctx, home, found, changed) })
+	dimmable, _ := kindOf(device.DeviceType)
 
-	return nil
+	return s.place(home, &device, zone, dimmable, *status.Level)
 }
 
 // forget takes out of the home the zones the plugin had put that the
 // bridge no longer has.
-func (s *served) forget(home *matter.Home, found map[string]bool) {
+func (s *served) forget(home *matter.Home, drives map[string]caseta.Device) {
 	for zone := range s.put {
-		if _, still := found[zone]; !still {
+		if _, still := drives[zone]; !still {
 			home.Remove(idOf(zone))
 			delete(s.put, zone)
 		}
@@ -224,7 +352,9 @@ func kindOf(kind string) (dimmable, served bool) {
 }
 
 // place puts a zone into the home, or, when the plugin had put it
-// before, says it reachable again and as it stands now.
+// before, says it reachable and as it stands now: off is on/off's alone,
+// and a zone that is off keeps its level. The home tells no one of what
+// changes nothing.
 func (s *served) place(home *matter.Home, device *caseta.Device, zone string, dimmable bool, level int) error {
 	if _, had := s.put[zone]; !had {
 		if err := home.Put(s.describe(home, device, zone, dimmable, level)); err != nil {
@@ -246,33 +376,6 @@ func (s *served) place(home *matter.Home, device *caseta.Device, zone string, di
 	}
 
 	return nil
-}
-
-// said reports what the Caséta bridge says of a zone, whoever changed
-// it: off is on/off's alone, and a zone that is off keeps its level.
-// served is the zones of this connection, and whether each has a level.
-func said(ctx context.Context, home *matter.Home, served map[string]bool, changed caseta.ZoneStatus) {
-	zone := changed.Zone.ID()
-
-	dimmable, known := served[zone]
-	if !known || changed.Level == nil {
-		return
-	}
-
-	var told []matter.Change
-
-	switch {
-	case *changed.Level == 0:
-		told = []matter.Change{matter.OnOffChanged{On: false}}
-	case dimmable:
-		told = []matter.Change{matter.OnOffChanged{On: true}, matter.LevelChanged{Level: levelOf(*changed.Level)}}
-	default:
-		told = []matter.Change{matter.OnOffChanged{On: true}}
-	}
-
-	if err := home.Report(idOf(zone), told...); err != nil {
-		slog.WarnContext(ctx, "a change of a zone could not be reported", "zone", zone, "error", err)
-	}
 }
 
 // level sets a zone's level on the connection the plugin has.
@@ -377,7 +480,7 @@ func translate(err error) error {
 	switch {
 	case err == nil:
 		return nil
-	case errors.Is(err, caseta.ErrLevel):
+	case errors.Is(err, caseta.ErrArgument):
 		return fmt.Errorf("%w: %w", matter.ErrInvalid, err)
 	case errors.Is(err, context.DeadlineExceeded):
 		return fmt.Errorf("%w: %w", matter.ErrUnreachable, err)
