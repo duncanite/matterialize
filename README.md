@@ -24,8 +24,9 @@ bridge:
   # The network interface it announces itself on. Left out, all of them.
   interface: en0
 
-# A directory of key material for the plugins. Left out when no plugin reads one.
-secrets: /etc/matterialize/secrets
+# The directory the daemon keeps in what its plugins give it to keep: the
+# credentials a pairing gave. Left out when no plugin keeps anything.
+store: /var/lib/matterialize/store
 
 # The plugins that are enabled, by name, each with its own settings. A plugin that
 # is not named does not run.
@@ -37,8 +38,9 @@ plugins:
 A key the daemon or a plugin does not know is refused, with where it is: a misspelt key
 that silently enables nothing is worse than a refusal.
 
-**No secret is written in it.** A plugin reads key material from the directory of
-secrets, by a name its settings give, and passwords from the environment.
+**No secret is written in it.** What a plugin has to keep that is one, the credentials
+a pairing gave, it gives the daemon, which keeps it in the store: one directory for
+each plugin, of files only the daemon's user reads. A plugin opens no file itself.
 
 ## What it does
 
@@ -67,17 +69,24 @@ plugins:
   lutron:
     # The Caséta bridge, by address or name; with a port, or LEAP's own.
     host: 192.0.2.20
-    # The credentials that pairing with the bridge gave, by the name of their
-    # directory among the secrets. Left out, "lutron".
-    credentials: lutron
+    # Where the bridge takes a pairing, when that is not the same host on the
+    # pairing port.
+    pairing: 192.0.2.20:8083
     # How long before a bridge that is not there is reached for again. Left
     # out, ten seconds.
     retry: 10s
 ```
 
-The credentials are what [go-lutron](https://github.com/duncanite/go-lutron)'s `lutron
-pair` writes: `key.pem`, `certificate.pem` and `root.pem` in one directory. The plugin
-does not pair.
+**The plugin pairs with the bridge by itself**, the first time it runs: it says so in
+the log, and waits for the button on the back of the bridge to be pressed. What the
+pairing gave is kept in the store as `lutron/credentials`: the key, the certificate the
+bridge signed and the bridge's root, three PEM blocks in that order. Take the file away
+and the plugin pairs again. Put there what
+[go-lutron](https://github.com/duncanite/go-lutron)'s `lutron pair` wrote (`key.pem`,
+`certificate.pem` and `root.pem`, one after the other) and it does not pair at all.
+
+A bridge that no longer takes the pairing is not paired with again by itself: what
+answers at an address is not always the bridge that was paired.
 
 A device switched on comes back to the level it last had; one that was off when it was
 first seen comes back to full, the bridge not saying where it stood.
