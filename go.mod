@@ -4,7 +4,7 @@ go 1.27.4
 
 require (
 	github.com/duncanite/go-lutron v0.0.0-20261116014603-600440ec5a32
-	github.com/duncanite/go-matter v0.0.0-20261115182412-e9d1484b1124
+	github.com/duncanite/go-matter v0.0.0-20261118094659-8e7a2347a9ba
 	github.com/mycophonic/primordium v0.15.1
 	go.yaml.in/yaml/v4 v4.0.0
 )

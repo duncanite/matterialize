@@ -6,8 +6,8 @@ github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/duncanite/go-lutron v0.0.0-20261116014603-600440ec5a32 h1:YyLuBZLpqJpeKmnhhfIwVjxu4gUUypbdyDt91XiJtJQ=
 github.com/duncanite/go-lutron v0.0.0-20261116014603-600440ec5a32/go.mod h1:U+i9z+iT0Eo9QdGupIdGdr7IeXsCOlsZBLypJ/JIzW4=
-github.com/duncanite/go-matter v0.0.0-20261115182412-e9d1484b1124 h1:/D+OJEzEcD9v8/38iN0JaJM0D7btyCcq5GpZYrvANlI=
-github.com/duncanite/go-matter v0.0.0-20261115182412-e9d1484b1124/go.mod h1:iwLiq9ywGeV2weChZoo3syZjKJf3JXuPlqkusWG7ZTU=
+github.com/duncanite/go-matter v0.0.0-20261118094659-8e7a2347a9ba h1:qs1iUwwmBtX5BK4SMMk5RIGeOeps8FLdPLKumAxmcSk=
+github.com/duncanite/go-matter v0.0.0-20261118094659-8e7a2347a9ba/go.mod h1:iwLiq9ywGeV2weChZoo3syZjKJf3JXuPlqkusWG7ZTU=
 github.com/dustin/go-humanize v1.1.0 h1:dbKTrvD0klcbBV/h4AWJdMuZogJACoMlvWIWZ5b2xWg=
 github.com/dustin/go-humanize v1.1.0/go.mod h1:hc1CvRkJMsgxqjmjMQF3QNRAZBwY8AXBAzKYoSX9sFI=
 github.com/forkcloser/blake3 v1.1.0 h1:E0tWTfoLiGurJrwvBcrrkiy1iAE80SX4WHx0BSyUOR8=
