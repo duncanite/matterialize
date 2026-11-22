@@ -4,7 +4,7 @@ go 1.27.4
 
 require (
 	github.com/duncanite/go-lutron v0.0.0-20261118045756-df5dc3512ca1
-	github.com/duncanite/go-matter v0.0.0-20261115182412-e9d1484b1124
+	github.com/duncanite/go-matter v0.0.0-20261122195957-fd75b5725749
 	github.com/duncanite/go-wemo v0.2.1-0.20261122100510-d4af43bc3adb
 	github.com/forkcloser/go-upnp v0.0.0-20261122055639-67c71c6ca7ec
 	github.com/mycophonic/primordium v0.15.1
@@ -13,7 +13,7 @@ require (
 
 require (
 	filippo.io/nistec v0.0.4 // indirect
-	github.com/SukramJ/go-fabric v0.22.3-0.20261114153753-9abb2e9e4e2f // indirect
+	github.com/SukramJ/go-fabric v0.23.0 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
 	github.com/forkcloser/blake3 v1.1.0 // indirect
 	github.com/forkcloser/xos v0.1.2 // indirect
