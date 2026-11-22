@@ -1,13 +1,13 @@
 filippo.io/nistec v0.0.4 h1:F14ZHT5htWlMnQVPndX9ro9arf56cBhQxq4LnDI491s=
 filippo.io/nistec v0.0.4/go.mod h1:PK/lw8I1gQT4hUML4QGaqljwdDaFcMyFKSXN7kjrtKI=
-github.com/SukramJ/go-fabric v0.22.3-0.20261114153753-9abb2e9e4e2f h1:K129miJv9sbANk0+PyWEaeRjsCTV/RvERsPbKKl8CKE=
-github.com/SukramJ/go-fabric v0.22.3-0.20261114153753-9abb2e9e4e2f/go.mod h1:sonXJfocMorsghjOG4Gn4nQ9G+YdCqF6Q11UTGEG9JA=
+github.com/SukramJ/go-fabric v0.23.0 h1:FmLvYkSpmXMgYGGXs+S4y8rpg6xMZhQr1xj2BkEy4aE=
+github.com/SukramJ/go-fabric v0.23.0/go.mod h1:sonXJfocMorsghjOG4Gn4nQ9G+YdCqF6Q11UTGEG9JA=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/duncanite/go-lutron v0.0.0-20261118045756-df5dc3512ca1 h1:5pIfbBxsl04Ma7NbuXYFzB6zLarHZbZkhE0g7fATMww=
 github.com/duncanite/go-lutron v0.0.0-20261118045756-df5dc3512ca1/go.mod h1:U+i9z+iT0Eo9QdGupIdGdr7IeXsCOlsZBLypJ/JIzW4=
-github.com/duncanite/go-matter v0.0.0-20261115182412-e9d1484b1124 h1:/D+OJEzEcD9v8/38iN0JaJM0D7btyCcq5GpZYrvANlI=
-github.com/duncanite/go-matter v0.0.0-20261115182412-e9d1484b1124/go.mod h1:iwLiq9ywGeV2weChZoo3syZjKJf3JXuPlqkusWG7ZTU=
+github.com/duncanite/go-matter v0.0.0-20261122195957-fd75b5725749 h1:4FFBwgmcrfrxx4E2cM3vOV106ZHWYbWPXFJdZodlYbE=
+github.com/duncanite/go-matter v0.0.0-20261122195957-fd75b5725749/go.mod h1:GulnGeUUlxLJ4znYacHLYr1+uo85RM/3PyQXTK3ibaA=
 github.com/duncanite/go-wemo v0.2.1-0.20261122100510-d4af43bc3adb h1:nFlO8y+pyzOMcAslobo2jSsQ69qkP57dZ/EA8zojQi4=
 github.com/duncanite/go-wemo v0.2.1-0.20261122100510-d4af43bc3adb/go.mod h1:r6N9mGbrvYW4ymgsrotgvRW8g+SD8rQ0/lLzqIrWAm0=
 github.com/dustin/go-humanize v1.1.0 h1:dbKTrvD0klcbBV/h4AWJdMuZogJACoMlvWIWZ5b2xWg=
