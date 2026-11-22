@@ -7,12 +7,16 @@
 // name, and runs it for as long as the daemon runs.
 //
 // A plugin has no file of its own and reads none: what it has to keep
-// from one run to the next, it gives the Store it is lent.
+// from one run to the next, it gives the Store it is lent. It has no
+// part of its own in what a host has one of, either: SSDP is the
+// daemon's, and lent.
 package plugin
 
 import (
 	"context"
 	"errors"
+
+	"github.com/forkcloser/go-upnp/ssdp"
 
 	"github.com/duncanite/go-matter"
 )
@@ -48,6 +52,22 @@ type Settings struct {
 	Decode func(into any) error
 	// Store keeps what the plugin gives it, for this plugin alone.
 	Store Store
+	// SSDP finds UPnP devices on the local network, for every plugin
+	// that asks.
+	SSDP SSDP
+}
+
+// SSDP is the daemon's part in SSDP: the port is one to a host, so the
+// daemon has it, and every plugin browses through the same one. It is
+// on the network from the first Browse, and not before. A maker's
+// library asks for the means of finding its devices through an
+// interface of its own, which a plugin makes of this in a few lines.
+type SSDP interface {
+	// Browse is ssdp.Browser's: what is advertised under a search
+	// target, told as it comes, changes and goes, until ctx ends. It
+	// returns an error sooner when the network can be heard no more,
+	// which the daemon does not come back from.
+	Browse(ctx context.Context, target string, handle func(ssdp.Change, ssdp.Advertisement)) error
 }
 
 // Store keeps what a plugin cannot ask its maker for again: the

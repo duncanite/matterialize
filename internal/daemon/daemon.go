@@ -12,10 +12,13 @@ import (
 	"slices"
 	"time"
 
+	"github.com/forkcloser/go-upnp/ssdp"
+
 	"github.com/duncanite/go-matter"
 	"github.com/duncanite/go-matter/bridge"
 
 	"github.com/duncanite/matterialize/internal/config"
+	"github.com/duncanite/matterialize/internal/lent"
 	"github.com/duncanite/matterialize/internal/store"
 	"github.com/duncanite/matterialize/plugin"
 )
@@ -39,7 +42,11 @@ const invitation = 15 * time.Minute
 // with it is written to out: the code is what lets a controller in, and
 // goes nowhere else.
 func Run(ctx context.Context, cfg *config.Config, makers map[string]plugin.Maker, out io.Writer) error {
-	plugins, err := made(cfg, makers)
+	// The host's part in SSDP, for whichever plugins browse.
+	browsing := lent.NewSSDP(ssdp.Config{})
+	defer func() { _ = browsing.Close() }()
+
+	plugins, err := made(cfg, makers, browsing)
 	if err != nil {
 		return err
 	}
@@ -99,8 +106,10 @@ func Run(ctx context.Context, cfg *config.Config, makers map[string]plugin.Maker
 }
 
 // made is the plugins the configuration enables, each made from its
-// settings.
-func made(cfg *config.Config, makers map[string]plugin.Maker) (map[string]plugin.Plugin, error) {
+// settings and what the daemon lends it.
+func made(
+	cfg *config.Config, makers map[string]plugin.Maker, browsing plugin.SSDP,
+) (map[string]plugin.Plugin, error) {
 	plugins := map[string]plugin.Plugin{}
 
 	for name, settings := range cfg.Plugins {
@@ -114,6 +123,7 @@ func made(cfg *config.Config, makers map[string]plugin.Maker) (map[string]plugin
 		one, err := maker(plugin.Settings{
 			Decode: config.Settings(&settings),
 			Store:  store.Dir(cfg.Store).For(name),
+			SSDP:   browsing,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("the plugin %s: %w", name, err)
