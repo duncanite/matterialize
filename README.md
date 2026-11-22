@@ -5,7 +5,7 @@ A daemon that makes the devices of a home that do not speak
 bridge, behind which each maker's devices appear to any Matter controller that is
 invited to it, whatever its ecosystem, several at once.
 
-The daemon is built, with one plugin: [Lutron Caséta](#lutron).
+The daemon is built, with two plugins: [Lutron Caséta](#lutron) and [Wemo](#wemo).
 
 ```bash
 matterialize /etc/matterialize/config.yaml
@@ -97,6 +97,40 @@ the other plugins go on. When it answers, its devices are as it then says: in th
 they have, the ones it no longer has gone, the ones it gained there. That is also when a
 device added to the bridge or taken from it is seen: the bridge's list is read when the
 connection is made, and not again while it lasts.
+
+### Wemo
+
+Belkin's Wi-Fi Wemo plugs: every one that advertises itself on the local network, each a
+plug with the name, the model, the serial number and the firmware it says it has. None
+is named in the configuration, and the plugin keeps nothing.
+
+```yaml
+plugins:
+  wemo:
+    # How long a plug is given to answer, and how long before one that did not
+    # is reached for again. Left out, ten seconds.
+    retry: 10s
+    # The port plugs send their events to. Left out, any free one.
+    port: 49200
+```
+
+With no setting to give, the plugin is enabled with nothing under its name: `wemo: {}`.
+
+**The plugs call the daemon back.** A plug tells what it is at by sending it to this
+host, at the host's address on the plug's own network and the port above; a firewall has
+to let that in. A plug that cannot reach it there says nothing and is not served: the
+log says which, and why. A plug on another network than any of the host's is not served
+either.
+
+The plugs are found over SSDP, which the daemon has one part in for every plugin: it is
+on every interface of the host, from the first plugin that asks.
+
+**A plug that leaves the network is unreachable, and stays in the home**; back, it is as
+it then says. A plug that moved to another address or started again is taken up anew by
+itself. A plug renamed keeps the name it had until the daemon is started again.
+
+**A plug has no credential.** Whatever advertises itself as a plug on the local network,
+and describes itself as that plug where it says it is, is served as one.
 
 It is built on [go-matter](https://github.com/duncanite/go-matter), which is the
 vocabulary of devices and the bridge itself.
