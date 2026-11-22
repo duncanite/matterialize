@@ -3,7 +3,7 @@ module github.com/duncanite/matterialize
 go 1.27.4
 
 require (
-	github.com/duncanite/go-lutron v0.0.0-20261116014603-600440ec5a32
+	github.com/duncanite/go-lutron v0.0.0-20261118045756-df5dc3512ca1
 	github.com/duncanite/go-matter v0.0.0-20261115182412-e9d1484b1124
 	github.com/mycophonic/primordium v0.15.1
 	go.yaml.in/yaml/v4 v4.0.0

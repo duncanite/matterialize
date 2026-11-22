@@ -3,12 +3,13 @@ package lutron_test
 import (
 	"context"
 	"errors"
-	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/duncanite/go-lutron/credentials"
+	"github.com/duncanite/go-lutron/leap"
 	"github.com/duncanite/go-lutron/leap/leaptest"
 	"github.com/duncanite/go-matter"
 
@@ -41,6 +42,7 @@ func caseta(t *testing.T) *leaptest.Bridge {
 	t.Cleanup(bridge.Close)
 
 	bridge.Set("/device", "MultipleDeviceDefinition", map[string]any{"Devices": []map[string]any{
+		leaptest.Itself(),
 		device("2", "Hall", "Lamp", "WallDimmer", "7"),
 		device("3", "Porch", "Light", "WallSwitch", "8"),
 		device("4", "Patio", "Outlet", "OutdoorPlugInSwitch", "9"),
@@ -50,6 +52,7 @@ func caseta(t *testing.T) *leaptest.Bridge {
 		device("8", "Den", "Shade", "SerenaHoneycombShade", "13"),
 		device("9", "Den", "Fan", "CasetaFanSpeedController", "14"),
 	}})
+	bridge.Set("/button", "MultipleButtonDefinition", map[string]any{"Buttons": []map[string]any{}})
 	bridge.Set("/zone/7/status", "OneZoneStatus", status("7", 40))
 	bridge.Set("/zone/8/status", "OneZoneStatus", status("8", 0))
 	bridge.Set("/zone/9/status", "OneZoneStatus", status("9", 100))
@@ -63,21 +66,68 @@ func caseta(t *testing.T) *leaptest.Bridge {
 	return bridge
 }
 
-// settings is what the daemon hands a plugin: the settings written, and
-// a directory of secrets holding the bridge's credentials as "lutron".
-func settings(t *testing.T, bridge *leaptest.Bridge, written string) plugin.Settings {
+// errGone is what a store that is broken answers.
+var errGone = errors.New("the disk is gone")
+
+// memory is a store of a test: what a plugin keeps, in memory. What is
+// broken in it can be read no more.
+type memory struct {
+	mu     sync.Mutex
+	held   map[string][]byte
+	broken string
+}
+
+func (m *memory) Get(_ context.Context, name string) ([]byte, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.broken == name {
+		return nil, errGone
+	}
+
+	value, kept := m.held[name]
+	if !kept {
+		return nil, plugin.ErrNotStored
+	}
+
+	return value, nil
+}
+
+func (m *memory) Put(_ context.Context, name string, value []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.held == nil {
+		m.held = map[string][]byte{}
+	}
+
+	m.held[name] = slices.Clone(value)
+
+	return nil
+}
+
+// sealed is an identity as the plugin keeps one: the key, the
+// certificate and the root, in PEM and in that order.
+func sealed(identity *leap.Credentials) []byte {
+	return slices.Concat(identity.Key, identity.Certificate, identity.Root)
+}
+
+// paired is the store of a plugin that has paired with a bridge.
+func paired(t *testing.T, bridge *leaptest.Bridge) *memory {
 	t.Helper()
 
-	secrets := t.TempDir()
-
-	reserved, err := credentials.Reserve(filepath.Join(secrets, "lutron"))
-	if err != nil {
+	store := &memory{}
+	if err := store.Put(t.Context(), "credentials", sealed(bridge.Credentials())); err != nil {
 		t.Fatal(err)
 	}
 
-	if err = reserved.Save(bridge.Credentials()); err != nil {
-		t.Fatal(err)
-	}
+	return store
+}
+
+// settings is what the daemon hands a plugin: the settings written, and
+// its store.
+func settings(t *testing.T, store plugin.Store, written string) plugin.Settings {
+	t.Helper()
 
 	read, err := config.Parse([]byte("bridge: {name: Test, state: /state}\nplugins:\n  lutron: " + written + "\n"))
 	if err != nil {
@@ -86,7 +136,7 @@ func settings(t *testing.T, bridge *leaptest.Bridge, written string) plugin.Sett
 
 	node := read.Plugins["lutron"]
 
-	return plugin.Settings{Decode: config.Settings(&node), Secrets: plugin.Secrets{Dir: secrets}}
+	return plugin.Settings{Decode: config.Settings(&node), Store: store}
 }
 
 // running is the plugin under way against a home.
@@ -96,13 +146,22 @@ type running struct {
 	stop  context.CancelFunc
 }
 
-// run makes the plugin for a bridge and runs it until the test ends,
-// returning once the bridge's zones are in the home. retry is how long
-// it waits before it reaches again for a bridge that went.
+// run makes the plugin for a bridge it has paired with and runs it
+// until the test ends, returning once the bridge's zones are in the
+// home. retry is how long it waits before it reaches again for a bridge
+// that went.
 func run(t *testing.T, bridge *leaptest.Bridge, retry string) *running {
 	t.Helper()
 
-	made, err := lutron.New(settings(t, bridge, "{host: "+bridge.Addr()+", retry: "+retry+"}"))
+	return start(t, settings(t, paired(t, bridge), "{host: "+bridge.Addr()+", retry: "+retry+"}"))
+}
+
+// start makes the plugin from what the daemon hands it and runs it until
+// the test ends, returning once four zones are in the home.
+func start(t *testing.T, given plugin.Settings) *running {
+	t.Helper()
+
+	made, err := lutron.New(given)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,6 +379,7 @@ func TestABridgeThatComesBack(t *testing.T) {
 	// What the bridge is when it is reached again: the lamp brighter,
 	// the outlet off, the porch light gone, a new dimmer.
 	bridge.Set("/device", "MultipleDeviceDefinition", map[string]any{"Devices": []map[string]any{
+		leaptest.Itself(),
 		device("2", "Hall", "Lamp", "WallDimmer", "7"),
 		device("4", "Patio", "Outlet", "OutdoorPlugInSwitch", "9"),
 		device("7", "Den", "Sconce", "WallDimmer", "12"),
@@ -379,12 +439,11 @@ func TestWhatThePluginRefuses(t *testing.T) {
 	}{
 		"no host":                 {"{}", plugin.ErrSettings, "it has no host"},
 		"a key that is none":      {"{host: h, port: 8081}", config.ErrInvalid, "port"},
-		"credentials not there":   {"{host: h, credentials: elsewhere}", plugin.ErrSettings, "the credentials"},
-		"credentials out of it":   {"{host: h, credentials: ../lutron}", plugin.ErrSettings, "the secret"},
+		"credentials, as before":  {"{host: h, credentials: lutron}", config.ErrInvalid, "credentials"},
 		"a retry that is no time": {"{host: h, retry: soon}", plugin.ErrSettings, "retry is a length of time"},
 		"a retry of no time":      {"{host: h, retry: 0s}", plugin.ErrSettings, "retry is a length of time"},
 	} {
-		if _, err := lutron.New(settings(t, bridge, row.written)); !errors.Is(err, row.want) ||
+		if _, err := lutron.New(settings(t, &memory{}, row.written)); !errors.Is(err, row.want) ||
 			!strings.Contains(err.Error(), row.says) {
 			t.Errorf("%s: %v", what, err)
 		}
@@ -392,7 +451,7 @@ func TestWhatThePluginRefuses(t *testing.T) {
 
 	// A host no bridge answers at is not refused: it is reached for
 	// until the plugin is stopped, and then the plugin has nothing to say.
-	made, err := lutron.New(settings(t, bridge, "{host: '127.0.0.1:1', retry: 10ms}"))
+	made, err := lutron.New(settings(t, paired(t, bridge), "{host: '127.0.0.1:1', retry: 10ms}"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -404,5 +463,142 @@ func TestWhatThePluginRefuses(t *testing.T) {
 
 	if err = made.Run(ctx, &home); err != nil {
 		t.Errorf("a host no bridge answers at: %v", err)
+	}
+}
+
+// A plugin whose store holds no pairing pairs with the bridge, once its
+// button is pressed, under the identity its store holds for that; keeps
+// what the pairing gave; and serves the zones under it. Made again over
+// the same store, it does not pair again.
+func TestABridgeNotPairedWith(t *testing.T) {
+	t.Parallel()
+
+	bridge := caseta(t)
+	certificate, key, root := bridge.BootstrapPEM()
+	store := &memory{}
+
+	if err := store.Put(t.Context(), "app", slices.Concat(key, certificate, root)); err != nil {
+		t.Fatal(err)
+	}
+
+	written := "{host: " + bridge.Addr() + ", pairing: " + bridge.PairingAddr() + ", retry: 10ms}"
+
+	bridge.Press()
+	start(t, settings(t, store, written)).stop()
+
+	if kept, err := store.Get(
+		t.Context(),
+		"credentials",
+	); err != nil ||
+		!strings.Contains(string(kept), "PRIVATE KEY") {
+		t.Errorf("after the pairing the store holds %q, %v", kept, err)
+	}
+
+	start(t, settings(t, store, written))
+
+	if clients := bridge.Paired(); !slices.Equal(clients, []string{"matterialize"}) {
+		t.Errorf("the bridge signed for %q", clients)
+	}
+}
+
+// What the store holds that is no pairing is not used, and not paired
+// over: the bridge is reached for again, and served once the store holds
+// a pairing.
+func TestAPairingThatIsNone(t *testing.T) {
+	t.Parallel()
+
+	bridge := caseta(t)
+	good := sealed(bridge.Credentials())
+
+	for what, held := range map[string][]byte{
+		"nothing of a pairing":   []byte("lutron"),
+		"a key alone":            bridge.Credentials().Key,
+		"the key not first":      slices.Concat(bridge.Credentials().Certificate, good),
+		"one a bridge takes not": sealed(leaptest.New().Credentials()),
+	} {
+		store := &memory{}
+		if err := store.Put(t.Context(), "credentials", held); err != nil {
+			t.Fatal(err)
+		}
+
+		made, err := lutron.New(settings(t, store, "{host: "+bridge.Addr()+", retry: 10ms}"))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		ctx, stop := context.WithCancel(t.Context())
+		ended := make(chan error, 1)
+
+		var home matter.Home
+
+		go func() { ended <- made.Run(ctx, &home) }()
+
+		time.Sleep(100 * time.Millisecond)
+
+		if devices, _ := home.Devices(ctx); len(devices) != 0 {
+			t.Errorf("%s: the home has %d devices", what, len(devices))
+		}
+
+		if err = store.Put(ctx, "credentials", good); err != nil {
+			t.Fatal(err)
+		}
+
+		for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+			if devices, _ := home.Devices(ctx); len(devices) == 4 {
+				break
+			}
+
+			if time.Now().After(deadline) {
+				t.Fatalf("%s: the zones never came once the store held a pairing", what)
+			}
+		}
+
+		stop()
+
+		if err = <-ended; err != nil {
+			t.Errorf("%s: the plugin ended with %v", what, err)
+		}
+
+		if clients := bridge.Paired(); len(clients) != 0 {
+			t.Errorf("%s: the bridge signed for %q", what, clients)
+		}
+	}
+}
+
+// A store that cannot be read is not one that holds nothing: the plugin
+// does not pair over what it could not see, whoever presses the button.
+func TestAStoreThatCannotBeRead(t *testing.T) {
+	t.Parallel()
+
+	bridge := caseta(t)
+	bridge.Press()
+
+	certificate, key, root := bridge.BootstrapPEM()
+	store := &memory{}
+
+	if err := store.Put(t.Context(), "app", slices.Concat(key, certificate, root)); err != nil {
+		t.Fatal(err)
+	}
+
+	store.broken = "credentials"
+
+	made, err := lutron.New(settings(
+		t, store, "{host: "+bridge.Addr()+", pairing: "+bridge.PairingAddr()+", retry: 10ms}",
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, stop := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer stop()
+
+	var home matter.Home
+
+	if err = made.Run(ctx, &home); err != nil {
+		t.Errorf("the plugin ended with %v", err)
+	}
+
+	if clients := bridge.Paired(); len(clients) != 0 {
+		t.Errorf("the bridge signed for %q", clients)
 	}
 }

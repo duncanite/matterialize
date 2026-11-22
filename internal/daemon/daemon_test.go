@@ -75,7 +75,7 @@ func configured(t *testing.T, plugins string) *config.Config {
 
 	read, err := config.Parse([]byte(
 		"bridge: {name: Test bridge, state: " + filepath.Join(t.TempDir(), "state") + "}\n" +
-			"secrets: /secrets\nplugins:\n" + plugins,
+			"store: " + filepath.Join(t.TempDir(), "store") + "\nplugins:\n" + plugins,
 	))
 	if err != nil {
 		t.Fatal(err)
@@ -125,8 +125,17 @@ func TestTheDaemonRunsWhatIsEnabled(t *testing.T) {
 		t.Fatalf("the daemon ended with %v", err)
 	}
 
-	if kitchen.Name != "Kitchen" || given.Secrets.Dir != "/secrets" {
-		t.Errorf("the plugin was made with the name %q and the secrets %q", kitchen.Name, given.Secrets.Dir)
+	if kitchen.Name != "Kitchen" {
+		t.Errorf("the plugin was made with the name %q", kitchen.Name)
+	}
+
+	// The store it was made with keeps what it is given.
+	if err := given.Store.Put(ctx, "token", []byte("kept")); err != nil {
+		t.Errorf("keeping a token: %v", err)
+	}
+
+	if kept, err := given.Store.Get(ctx, "token"); err != nil || string(kept) != "kept" {
+		t.Errorf("the token kept is %q, %v", kept, err)
 	}
 
 	// No controller holds a bridge that is new: it says how to pair.

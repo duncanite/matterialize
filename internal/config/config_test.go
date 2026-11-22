@@ -15,7 +15,7 @@ bridge:
   name: Home
   state: /var/lib/matterialize
   interface: en0
-secrets: /etc/matterialize/secrets
+store: /var/lib/matterialize/store
 plugins:
   lights:
     host: 192.0.2.20
@@ -24,7 +24,8 @@ plugins:
 `
 
 // A configuration is read as it is written: the bridge, the directory
-// of secrets, and each plugin that is enabled with its own settings.
+// of what the plugins keep, and each plugin that is enabled with its own
+// settings.
 func TestAConfigurationIsRead(t *testing.T) {
 	t.Parallel()
 
@@ -39,7 +40,7 @@ func TestAConfigurationIsRead(t *testing.T) {
 	}
 
 	if read.Bridge != (config.Bridge{Name: "Home", State: "/var/lib/matterialize", Interface: "en0"}) ||
-		read.Secrets != "/etc/matterialize/secrets" || len(read.Plugins) != 2 {
+		read.Store != "/var/lib/matterialize/store" || len(read.Plugins) != 2 {
 		t.Errorf("read %+v", read)
 	}
 

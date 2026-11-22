@@ -16,6 +16,7 @@ import (
 	"github.com/duncanite/go-matter/bridge"
 
 	"github.com/duncanite/matterialize/internal/config"
+	"github.com/duncanite/matterialize/internal/store"
 	"github.com/duncanite/matterialize/plugin"
 )
 
@@ -111,8 +112,8 @@ func made(cfg *config.Config, makers map[string]plugin.Maker) (map[string]plugin
 		}
 
 		one, err := maker(plugin.Settings{
-			Decode:  config.Settings(&settings),
-			Secrets: plugin.Secrets{Dir: cfg.Secrets},
+			Decode: config.Settings(&settings),
+			Store:  store.Dir(cfg.Store).For(name),
 		})
 		if err != nil {
 			return nil, fmt.Errorf("the plugin %s: %w", name, err)
