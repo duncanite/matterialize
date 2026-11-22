@@ -9,6 +9,8 @@ import (
 	"os"
 
 	"go.yaml.in/yaml/v4"
+
+	"github.com/duncanite/matterialize/internal/selection"
 )
 
 // ErrInvalid is a configuration that cannot be used.
@@ -22,6 +24,10 @@ type Config struct {
 	// it to keep: the credentials a pairing gave. It is secret. It may
 	// be left out when no plugin that is enabled keeps anything.
 	Store string `yaml:"store"`
+	// Serve is which devices the bridge serves, of those the plugins
+	// find: each a device's ID, or the beginning of one and "*". With
+	// the key left out, it is nil, and every device is served.
+	Serve []string `yaml:"-"`
 	// Plugins is the plugins that are enabled, by name, each with its
 	// settings as that plugin reads them. A plugin that is not named
 	// does not run.
@@ -56,13 +62,34 @@ func Load(path string) (*Config, error) {
 // where it is: a misspelt key that silently enables nothing is worse
 // than a refusal.
 func Parse(written []byte) (*Config, error) {
-	var read Config
+	// The list of what is served is read as a node: a key that is there
+	// with nothing under it, its last pattern commented out, is not a key
+	// left out, and a list of strings cannot tell the two apart.
+	var whole struct {
+		Config `yaml:",inline"`
+
+		Serve yaml.Node `yaml:"serve"`
+	}
 
 	decoder := yaml.NewDecoder(bytes.NewReader(written))
 	decoder.KnownFields(true)
 
-	if err := decoder.Decode(&read); err != nil {
+	if err := decoder.Decode(&whole); err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrInvalid, err)
+	}
+
+	read := whole.Config
+
+	if whole.Serve.Kind != 0 {
+		// Never nil from here: a key with nothing under it is a list
+		// that holds none, which is refused below.
+		read.Serve = []string{}
+
+		if whole.Serve.Tag != "!!null" {
+			if err := whole.Serve.Decode(&read.Serve); err != nil {
+				return nil, fmt.Errorf("%w: serve: %w", ErrInvalid, err)
+			}
+		}
 	}
 
 	switch {
@@ -72,6 +99,10 @@ func Parse(written []byte) (*Config, error) {
 		return nil, fmt.Errorf("%w: the bridge has no state directory", ErrInvalid)
 	case len(read.Plugins) == 0:
 		return nil, fmt.Errorf("%w: no plugin is enabled", ErrInvalid)
+	}
+
+	if err := selection.Check(read.Serve); err != nil {
+		return nil, fmt.Errorf("%w: serve: %w", ErrInvalid, err)
 	}
 
 	return &read, nil

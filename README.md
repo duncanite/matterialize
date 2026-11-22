@@ -28,6 +28,12 @@ bridge:
 # credentials a pairing gave. Left out when no plugin keeps anything.
 store: /var/lib/matterialize/store
 
+# Which devices the bridge serves, of those the plugins find: a device's ID, or
+# the beginning of one and "*". Left out, every device is served.
+serve:
+  - lutron/*
+  - wemo/Socket-1_0-221234K0100001
+
 # The plugins that are enabled, by name, each with its own settings. A plugin that
 # is not named does not run.
 plugins:
@@ -50,6 +56,11 @@ each plugin, of files only the daemon's user reads. A plugin opens no file itsel
 - **A plugin for each maker**, compiled in and enabled by the configuration, read once
   at the start. A plugin turns its maker's devices into Matter ones and does nothing
   else.
+- **Every device found is said in the log**, once, with its ID, its name and whether
+  it is served: a plugin goes on finding its maker's devices for as long as the daemon
+  runs, and what is on the network and left out is to be seen, not guessed. The ID in
+  the log is what `serve` takes. A list of what is served keeps a home to what was
+  chosen; it does not prove a device is what it says it is.
 - **A maker that goes away is its plugin's to wait for**: its devices are unreachable
   until it is back, and the rest of the home is served. A plugin ends only for what it
   cannot come back from, and that is the end of the daemon, with why.

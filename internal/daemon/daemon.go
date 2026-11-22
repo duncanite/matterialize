@@ -19,6 +19,7 @@ import (
 
 	"github.com/duncanite/matterialize/internal/config"
 	"github.com/duncanite/matterialize/internal/lent"
+	"github.com/duncanite/matterialize/internal/selection"
 	"github.com/duncanite/matterialize/internal/store"
 	"github.com/duncanite/matterialize/plugin"
 )
@@ -35,8 +36,9 @@ var ErrEnded = errors.New("it ended while the daemon was running")
 const invitation = 15 * time.Minute
 
 // Run is the daemon: it makes the plugins cfg enables from makers, runs
-// them, and serves what they put as a bridge, until ctx ends. It returns
-// nil then, and an error when it could not start or a plugin ended.
+// them, and serves what they put, and cfg has served, as a bridge, until
+// ctx ends. It returns nil then, and an error when it could not start or
+// a plugin ended.
 //
 // A bridge no controller holds yet is opened to one, and how to pair
 // with it is written to out: the code is what lets a controller in, and
@@ -56,7 +58,7 @@ func Run(ctx context.Context, cfg *config.Config, makers map[string]plugin.Maker
 	served, err := bridge.Open(
 		ctx,
 		bridge.Config{Name: cfg.Bridge.Name, Dir: cfg.Bridge.State, Interface: cfg.Bridge.Interface},
-		&home,
+		selection.Of(&home, cfg.Serve),
 	)
 	if err != nil {
 		return fmt.Errorf("opening the bridge: %w", err)
