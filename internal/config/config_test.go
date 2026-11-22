@@ -112,3 +112,31 @@ func TestWhatIsNoConfiguration(t *testing.T) {
 		})
 	}
 }
+
+// What the bridge serves is read as it is written, is every device when
+// it is left out, and is refused when it names nothing.
+func TestWhatIsServed(t *testing.T) {
+	t.Parallel()
+
+	const rest = "bridge: {name: Home, state: /state}\nplugins: {lights: {}}\n"
+
+	read, err := config.Parse([]byte(rest + "serve: [lights/*, plugs/one]\n"))
+	if err != nil || len(read.Serve) != 2 || read.Serve[0] != "lights/*" || read.Serve[1] != "plugs/one" {
+		t.Fatalf("read %+v, %v", read, err)
+	}
+
+	if read, err = config.Parse([]byte(rest)); err != nil || read.Serve != nil {
+		t.Fatalf("with nothing said of what is served, read %+v, %v", read, err)
+	}
+
+	// A key with nothing under it is not a key left out: it would serve
+	// every device where the last pattern was commented out.
+	for _, written := range []string{
+		"serve: []\n", "serve: ['']\n", "serve: ['a*b']\n",
+		"serve:\n", "serve:\n  # - lights/*\n", "serve: ~\n", "serve: null\n", "serve: lights/*\n",
+	} {
+		if _, err = config.Parse([]byte(rest + written)); !errors.Is(err, config.ErrInvalid) {
+			t.Errorf("%q: %v", written, err)
+		}
+	}
+}
