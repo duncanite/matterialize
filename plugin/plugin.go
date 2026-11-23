@@ -8,14 +8,16 @@
 //
 // A plugin has no file of its own and reads none: what it has to keep
 // from one run to the next, it gives the Store it is lent. It has no
-// part of its own in what a host has one of, either: SSDP is the
-// daemon's, and lent.
+// part of its own in what a host has one of, either: SSDP and Multicast
+// DNS are the daemon's, and lent, on the interfaces the daemon's
+// configuration says.
 package plugin
 
 import (
 	"context"
 	"errors"
 
+	"github.com/forkcloser/go-mdns"
 	"github.com/forkcloser/go-upnp/ssdp"
 
 	"github.com/duncanite/go-matter"
@@ -55,6 +57,9 @@ type Settings struct {
 	// SSDP finds UPnP devices on the local network, for every plugin
 	// that asks.
 	SSDP SSDP
+	// MDNS finds what is announced over Multicast DNS on the local
+	// network, for every plugin that asks.
+	MDNS MDNS
 }
 
 // SSDP is the daemon's part in SSDP: the port is one to a host, so the
@@ -84,4 +89,18 @@ type Store interface {
 	// Put keeps value under name, in place of what was there: whole, or
 	// not at all.
 	Put(ctx context.Context, name string, value []byte) error
+}
+
+// MDNS is the daemon's part in Multicast DNS, as far as a plugin has
+// it: browsing. A host has one such part to an interface, so the daemon
+// has it, announces its bridge through it, and every plugin browses
+// through the same one. A maker's library asks for the means of finding
+// its devices through an interface of its own, which a plugin makes of
+// this in a few lines.
+type MDNS interface {
+	// Browse is mdns.Peer's: the instances of a service, told as they
+	// are found, change and go, until ctx ends. Which interfaces are
+	// listened on is the daemon's configuration to say: one a query
+	// names that is not among them is not listened on.
+	Browse(ctx context.Context, query mdns.Query, handle func(mdns.Change, mdns.Instance)) error
 }

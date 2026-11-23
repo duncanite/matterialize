@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -134,6 +135,45 @@ func TestWhatIsServed(t *testing.T) {
 	for _, written := range []string{
 		"serve: []\n", "serve: ['']\n", "serve: ['a*b']\n",
 		"serve:\n", "serve:\n  # - lights/*\n", "serve: ~\n", "serve: null\n", "serve: lights/*\n",
+	} {
+		if _, err = config.Parse([]byte(rest + written)); !errors.Is(err, config.ErrInvalid) {
+			t.Errorf("%q: %v", written, err)
+		}
+	}
+}
+
+// Where the daemon listens for devices is read as it is written, is
+// every interface for a means that is left out, and is refused when it
+// names none.
+func TestWhereDevicesAreHeard(t *testing.T) {
+	t.Parallel()
+
+	const rest = "bridge: {name: Home, state: /state}\nplugins: {lights: {}}\n"
+
+	read, err := config.Parse([]byte(rest + "discover:\n  ssdp: [eth0]\n  mdns: [eth0, eth1]\n"))
+	if err != nil || !slices.Equal(read.Discover.SSDP, []string{"eth0"}) ||
+		!slices.Equal(read.Discover.MDNS, []string{"eth0", "eth1"}) {
+		t.Fatalf("read %+v, %v", read, err)
+	}
+
+	for _, written := range []string{"", "discover:\n", "discover: {}\n"} {
+		if read, err = config.Parse([]byte(rest + written)); err != nil || read.Discover.SSDP != nil ||
+			read.Discover.MDNS != nil {
+			t.Errorf("%q: read %+v, %v", written, read, err)
+		}
+	}
+
+	if read, err = config.Parse([]byte(rest + "discover: {mdns: [eth1]}\n")); err != nil ||
+		read.Discover.SSDP != nil || len(read.Discover.MDNS) != 1 {
+		t.Errorf("with one means named, read %+v, %v", read, err)
+	}
+
+	// A key with nothing under it is not a key left out: it would listen
+	// everywhere where the last interface was commented out.
+	for _, written := range []string{
+		"discover: {ssdp: []}\n", "discover: {mdns: []}\n", "discover:\n  ssdp:\n", "discover:\n  mdns:\n  # - eth0\n",
+		"discover: {mdns: ~}\n", "discover: {ssdp: ['']}\n", "discover: {mdns: eth0}\n", "discover: {upnp: [eth0]}\n",
+		"discover: [eth0]\n",
 	} {
 		if _, err = config.Parse([]byte(rest + written)); !errors.Is(err, config.ErrInvalid) {
 			t.Errorf("%q: %v", written, err)
