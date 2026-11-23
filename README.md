@@ -12,6 +12,9 @@ The daemon is built, with three plugins: [Lutron Caséta](#lutron), [Wemo](#wemo
 matterialize /etc/matterialize/config.yaml
 ```
 
+Run with one argument, the configuration, it is the daemon. It has one other word,
+`keep`, [to be given a secret](#the-configuration).
+
 ## The configuration
 
 ```yaml
@@ -48,6 +51,20 @@ that silently enables nothing is worse than a refusal.
 **No secret is written in it.** What a plugin has to keep that is one, the credentials
 a pairing gave, it gives the daemon, which keeps it in the store: one directory for
 each plugin, of files only the daemon's user reads. A plugin opens no file itself.
+
+**What a plugin cannot get by itself, the daemon is given.** Some secrets no pairing
+gives: one an operator reads off a maker's account. The daemon keeps it itself, read
+from standard input and never shown:
+
+```bash
+matterialize keep /etc/matterialize/config.yaml PLUGIN NAME < SECRET
+```
+
+`PLUGIN` is a plugin this build has, and `NAME` the name that plugin reads it under,
+which its section below says. It goes where that plugin's store reads it, in place of
+what was there, and a daemon that is running reads it the next time it asks: nothing is
+restarted. Where and how the store is kept is the daemon's alone; nothing else writes
+there.
 
 ## What it does
 
