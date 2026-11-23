@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 
 	"go.yaml.in/yaml/v4"
 
@@ -28,10 +29,25 @@ type Config struct {
 	// find: each a device's ID, or the beginning of one and "*". With
 	// the key left out, it is nil, and every device is served.
 	Serve []string `yaml:"-"`
+	// Discover is where the daemon listens for devices, on its plugins'
+	// behalf.
+	Discover Discover `yaml:"-"`
 	// Plugins is the plugins that are enabled, by name, each with its
 	// settings as that plugin reads them. A plugin that is not named
 	// does not run.
 	Plugins map[string]yaml.Node `yaml:"plugins"`
+}
+
+// Discover is the interfaces the daemon listens on for the devices its
+// plugins look for, by the means they are found by. A plugin chooses
+// none: it is told of what is heard where these say. Each is a list of
+// interface names, as the host has them; with a key left out it is nil,
+// and that means is listened for on every interface.
+type Discover struct {
+	// SSDP is where UPnP devices are heard.
+	SSDP []string
+	// MDNS is where what is announced over Multicast DNS is heard.
+	MDNS []string
 }
 
 // Bridge is the bridge as a controller sees it.
@@ -62,13 +78,14 @@ func Load(path string) (*Config, error) {
 // where it is: a misspelt key that silently enables nothing is worse
 // than a refusal.
 func Parse(written []byte) (*Config, error) {
-	// The list of what is served is read as a node: a key that is there
-	// with nothing under it, its last pattern commented out, is not a key
-	// left out, and a list of strings cannot tell the two apart.
+	// A list is read as a node: a key that is there with nothing under
+	// it, its last item commented out, is not a key left out, and a list
+	// of strings cannot tell the two apart.
 	var whole struct {
 		Config `yaml:",inline"`
 
-		Serve yaml.Node `yaml:"serve"`
+		Serve    yaml.Node `yaml:"serve"`
+		Discover listed    `yaml:"discover"`
 	}
 
 	decoder := yaml.NewDecoder(bytes.NewReader(written))
@@ -80,16 +97,21 @@ func Parse(written []byte) (*Config, error) {
 
 	read := whole.Config
 
-	if whole.Serve.Kind != 0 {
-		// Never nil from here: a key with nothing under it is a list
-		// that holds none, which is refused below.
-		read.Serve = []string{}
-
-		if whole.Serve.Tag != "!!null" {
-			if err := whole.Serve.Decode(&read.Serve); err != nil {
-				return nil, fmt.Errorf("%w: serve: %w", ErrInvalid, err)
-			}
+	for _, one := range []struct {
+		key  string
+		node *yaml.Node
+		into *[]string
+	}{
+		{"serve", &whole.Serve, &read.Serve},
+		{"discover.ssdp", &whole.Discover.SSDP, &read.Discover.SSDP},
+		{"discover.mdns", &whole.Discover.MDNS, &read.Discover.MDNS},
+	} {
+		words, err := list(one.node)
+		if err != nil {
+			return nil, fmt.Errorf("%w: %s: %w", ErrInvalid, one.key, err)
 		}
+
+		*one.into = words
 	}
 
 	switch {
@@ -103,6 +125,17 @@ func Parse(written []byte) (*Config, error) {
 
 	if err := selection.Check(read.Serve); err != nil {
 		return nil, fmt.Errorf("%w: serve: %w", ErrInvalid, err)
+	}
+
+	for key, names := range map[string][]string{
+		"discover.ssdp": read.Discover.SSDP, "discover.mdns": read.Discover.MDNS,
+	} {
+		switch {
+		case names != nil && len(names) == 0:
+			return nil, fmt.Errorf("%w: %s: the list holds none, and would listen nowhere", ErrInvalid, key)
+		case slices.Contains(names, ""):
+			return nil, fmt.Errorf("%w: %s: an interface with no name", ErrInvalid, key)
+		}
 	}
 
 	return &read, nil
@@ -131,4 +164,31 @@ func Settings(node *yaml.Node) func(into any) error {
 
 		return nil
 	}
+}
+
+// listed is Discover as it is written: its lists as nodes.
+type listed struct {
+	SSDP yaml.Node `yaml:"ssdp"`
+	MDNS yaml.Node `yaml:"mdns"`
+}
+
+// list is a list of words as it is written under a key: nil for a key
+// that is not there, and never nil for one that is, whatever is under
+// it.
+func list(node *yaml.Node) ([]string, error) {
+	if node.Kind == 0 {
+		return nil, nil
+	}
+
+	words := []string{}
+
+	if node.Tag == "!!null" {
+		return words, nil
+	}
+
+	if err := node.Decode(&words); err != nil {
+		return nil, fmt.Errorf("not a list: %w", err)
+	}
+
+	return words, nil
 }

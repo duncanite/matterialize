@@ -25,8 +25,16 @@ bridge:
   # device has which place. The same directory is the same bridge after a
   # restart; without it every controller has to be paired again.
   state: /var/lib/matterialize
-  # The network interface it announces itself on. Left out, all of them.
+  # The network interface it is announced on, for controllers to find. Left
+  # out, every one a controller could reach it by.
   interface: en0
+
+# Where the daemon listens for the devices its plugins look for, by the means
+# they are found by: lists of interface names. A means left out is listened for
+# on every interface.
+discover:
+  ssdp: [en1]
+  mdns: [en0, en1]
 
 # The directory the daemon keeps in what its plugins give it to keep: the
 # credentials a pairing gave. Left out when no plugin keeps anything.
@@ -79,6 +87,19 @@ there.
   runs, and what is on the network and left out is to be seen, not guessed. The ID in
   the log is what `serve` takes. A list of what is served keeps a home to what was
   chosen; it does not prove a device is what it says it is.
+- **The daemon alone listens and announces, and lends it.** A host has one part in
+  Multicast DNS to an interface, and one in SSDP: two programs, or two parts of one,
+  that each open their own do not both hear what they asked. So the daemon has one of
+  each. Its bridge is announced through the one, on the interface `bridge.interface`
+  names; its plugins find their devices through both, on the interfaces `discover`
+  names; and a plugin opens neither, and chooses no interface. An interface that is
+  named and that the host does not have when the daemon starts is refused, by its name.
+- **The host answers to the name Matter has it take**: the hardware address of the
+  interface the bridge is announced on, as hexadecimal digits; with no interface named,
+  that of the first, by its number, of the interfaces a bridge is then announced on. The
+  daemon listens on Multicast DNS from its start, and plugins find devices from then; it
+  answers to its name from the first thing it announces, which is its bridge. A host with
+  no hardware address to be named by is refused: no name is made up.
 - **A maker that goes away is its plugin's to wait for**: its devices are unreachable
   until it is back, and the rest of the home is served. A plugin ends only for what it
   cannot come back from, and that is the end of the daemon, with why.
@@ -152,7 +173,7 @@ log says which, and why. A plug on another network than any of the host's is not
 either.
 
 The plugs are found over SSDP, which the daemon has one part in for every plugin: it is
-on every interface of the host, from the first plugin that asks.
+on the interfaces `discover.ssdp` names, from the first plugin that asks.
 
 **A plug that leaves the network is unreachable, and stays in the home**; back, it is as
 it then says. A plug that moved to another address or started again is taken up anew by
@@ -163,9 +184,10 @@ and describes itself as that plug where it says it is, is served as one.
 
 ### Dyson
 
-Dyson's purifiers of two generations, the Pure Cool Link and the Pure Hot+Cool: each one
-the configuration names, an air purifier with its fan, what it reads of the air, its
-filters and, for a Hot+Cool, its heater.
+Dyson's purifiers of two generations, the Pure Cool Link and the Pure Hot+Cool: every one
+that announces itself on the local network and whose credential the store holds, an air
+purifier with its fan, what it reads of the air, its filters and, for a Hot+Cool, its
+heater. None is named in the configuration, and neither is any address.
 
 ```yaml
 plugins:
@@ -176,25 +198,34 @@ plugins:
     # How often each purifier is asked what its sensors read. Left out, thirty
     # seconds.
     every: 30s
-    purifiers:
-      - serial: NN2-US-HKA0000A
-        # Its product type: 475 a Pure Cool Link, 527 a Pure Hot+Cool.
-        type: "475"
-        # Its address, with or without a port.
-        host: 192.0.2.30
-        # What a controller shows for it. Left out, the model's name.
-        name: Bedroom purifier
 ```
+
+With no setting to give, the plugin is enabled with nothing under its name: `dyson: {}`.
+
+**The purifiers are found.** A purifier announces itself over Multicast DNS, its serial
+and its product type in its name. The plugin hears it through the daemon's part in
+Multicast DNS, on the interfaces `discover.mdns` names, and dials it at the address it
+announces. One that announces another address is followed there.
 
 **A purifier is opened by a credential of its own**, which is not on the network and not
 in the configuration. The plugin reads it from the store, as `dyson/` and the purifier's
 serial: one line, the string [go-dyson](https://github.com/duncanite/go-dyson)'s
-`dyson account` prints for that purifier as `DYSON_CREDENTIAL`. A purifier whose
-credential is not there is said in the log and reached for again: put the file there and
-the purifier is served, with no restart.
+`dyson account` prints for that purifier as `DYSON_CREDENTIAL`, beside the serial to
+name it by: `matterialize keep CONFIG dyson SERIAL`, [given it on standard
+input](#the-configuration). A purifier whose credential is not there is found, said in
+the log, and not served: keep it and it is, with no restart. One of a type the plugin
+does not serve is said in the log and left alone.
 
-A purifier is at the address the configuration gives. Finding purifiers by themselves,
-over mDNS, comes with the daemon lending its plugins mDNS as it lends them SSDP.
+**An announcement is anyone's to make.** Whatever announces itself under a purifier's
+serial is dialled and offered that purifier's credential, which a purifier's own protocol
+sends as it is. That credential is the purifier's for as long as it is set up, and whoever
+holds it drives its fan, and a Hot+Cool's heater. So the purifiers' network is one to
+keep to them, and `discover.mdns` is where that is said: left out, plugins hear
+announcements on every interface the host has; naming the purifiers' interface there
+keeps the plugin to it.
+
+**The settings changed with discovery.** A configuration that lists `purifiers` is
+refused, by that key: take the list out. A purifier is now shown under its model's name.
 
 What is served of each:
 
@@ -222,9 +253,9 @@ air is. The sleep timer is not served either: Matter has no word for it.
 A purifier is not known to say what its sensors read unless it is asked, so it is asked
 again and again; what its fan, its filters and its heater do, it says as it happens.
 
-**A purifier that goes is unreachable, and stays in the home**; reached again, it is as
-it then says. Why it is not there is said in the log once, and again when the reason
-changes, not at every try.
+**A purifier that goes is unreachable, and stays in the home**, whether it stops
+answering or stops announcing itself; there again, it is as it then says. Why it is not
+there is said in the log once, and again when the reason changes, not at every try.
 
 It is built on [go-matter](https://github.com/duncanite/go-matter), which is the
 vocabulary of devices and the bridge itself.

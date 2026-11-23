@@ -1,10 +1,14 @@
-// Package lent is what the daemon has one of and lends its plugins: its
-// part in SSDP.
+// Package lent is what the daemon has one of and lends: its part in
+// SSDP, for its plugins, and its part in Multicast DNS, for its plugins
+// and its bridge. A host has one of each to an interface, and which
+// interfaces each is used on, and for what, is the configuration's to
+// say.
 package lent
 
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/forkcloser/go-upnp/ssdp"
@@ -21,8 +25,16 @@ type SSDP struct {
 	closed  bool
 }
 
-// NewSSDP makes the daemon's part in SSDP, and opens nothing.
-func NewSSDP(cfg ssdp.Config) *SSDP {
+// NewSSDP makes the daemon's part in SSDP, and opens nothing. It is on
+// the interfaces named, of those cfg has it on; with none named, nil,
+// on all of them.
+func NewSSDP(cfg ssdp.Config, interfaces []string) *SSDP {
+	if among := cfg.Interfaces; interfaces != nil {
+		cfg.Interfaces = func(on ssdp.Interface) bool {
+			return slices.Contains(interfaces, on.Name) && (among == nil || among(on))
+		}
+	}
+
 	return &SSDP{cfg: cfg}
 }
 

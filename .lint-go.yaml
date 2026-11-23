@@ -78,14 +78,15 @@ golangci:
         rules:
           main:
             # The vocabulary of devices and the bridge, the makers'
-            # libraries the plugins are written on, the SSDP the daemon
-            # lends them, the YAML the configuration is written in, and
+            # libraries the plugins are written on, the SSDP and the
+            # Multicast DNS the daemon lends them, the YAML the configuration is written in, and
             # the library files and processes are handled with.
             allow:
               - github.com/duncanite/go-dyson
               - github.com/duncanite/go-lutron
               - github.com/duncanite/go-matter
               - github.com/duncanite/go-wemo
+              - github.com/forkcloser/go-mdns
               - github.com/forkcloser/go-upnp
               - github.com/mycophonic/primordium
               - go.yaml.in/yaml/v4

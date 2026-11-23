@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net"
 	"slices"
 	"time"
 
@@ -28,6 +29,10 @@ import (
 // in.
 var ErrNoPlugin = errors.New("no such plugin")
 
+// ErrNoInterface is an interface the configuration names that the host
+// does not have.
+var ErrNoInterface = errors.New("the host has no such interface")
+
 // ErrEnded is a plugin that stopped while the daemon was still running,
 // and said nothing of why.
 var ErrEnded = errors.New("it ended while the daemon was running")
@@ -44,11 +49,27 @@ const invitation = 15 * time.Minute
 // with it is written to out: the code is what lets a controller in, and
 // goes nowhere else.
 func Run(ctx context.Context, cfg *config.Config, makers map[string]plugin.Maker, out io.Writer) error {
-	// The host's part in SSDP, for whichever plugins browse.
-	browsing := lent.NewSSDP(ssdp.Config{})
+	if err := present(cfg); err != nil {
+		return err
+	}
+
+	// The host's part in SSDP, for whichever plugins browse, where the
+	// configuration has them hear it.
+	browsing := lent.NewSSDP(ssdp.Config{}, cfg.Discover.SSDP)
 	defer func() { _ = browsing.Close() }()
 
-	plugins, err := made(cfg, makers, browsing)
+	// The host's part in Multicast DNS: one, for the bridge and for the
+	// plugins alike, under the name Matter has the bridge's host take.
+	// It is closed after the bridge is, so that the bridge's goodbyes
+	// are said.
+	multicast, err := named(ctx, cfg)
+	if err != nil {
+		return err
+	}
+
+	defer func() { _ = multicast.Close() }()
+
+	plugins, err := made(cfg, makers, browsing, multicast)
 	if err != nil {
 		return err
 	}
@@ -57,7 +78,7 @@ func Run(ctx context.Context, cfg *config.Config, makers map[string]plugin.Maker
 
 	served, err := bridge.Open(
 		ctx,
-		bridge.Config{Name: cfg.Bridge.Name, Dir: cfg.Bridge.State, Interface: cfg.Bridge.Interface},
+		bridge.Config{Name: cfg.Bridge.Name, Dir: cfg.Bridge.State, Network: multicast},
 		selection.Of(&home, cfg.Serve),
 	)
 	if err != nil {
@@ -107,10 +128,46 @@ func Run(ctx context.Context, cfg *config.Config, makers map[string]plugin.Maker
 	return failed
 }
 
+// named puts the daemon on Multicast DNS under the name its host has: a
+// host with no hardware address to be named by is refused, since a
+// bridge is announced under no other name.
+func named(ctx context.Context, cfg *config.Config) (*lent.MDNS, error) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil, fmt.Errorf("reading the host's interfaces: %w", err)
+	}
+
+	host, err := lent.HostOf(interfaces, cfg.Bridge.Interface)
+	if err != nil {
+		return nil, fmt.Errorf("naming the host: %w", err)
+	}
+
+	return lent.OpenMDNS(ctx, lent.MDNSConfig{Host: host, Bridge: cfg.Bridge.Interface, Plugins: cfg.Discover.MDNS})
+}
+
+// present says whether the host has every interface the configuration
+// names, when the daemon starts. One it has not is refused, by its name:
+// a name misspelt would otherwise listen nowhere and say nothing, and
+// SSDP takes up no interface that comes after it began.
+func present(cfg *config.Config) error {
+	named := slices.Concat(cfg.Discover.SSDP, cfg.Discover.MDNS)
+	if cfg.Bridge.Interface != "" {
+		named = append(named, cfg.Bridge.Interface)
+	}
+
+	for _, name := range named {
+		if _, err := net.InterfaceByName(name); err != nil {
+			return fmt.Errorf("%w: %q", ErrNoInterface, name)
+		}
+	}
+
+	return nil
+}
+
 // made is the plugins the configuration enables, each made from its
 // settings and what the daemon lends it.
 func made(
-	cfg *config.Config, makers map[string]plugin.Maker, browsing plugin.SSDP,
+	cfg *config.Config, makers map[string]plugin.Maker, browsing plugin.SSDP, multicast plugin.MDNS,
 ) (map[string]plugin.Plugin, error) {
 	plugins := map[string]plugin.Plugin{}
 
@@ -126,6 +183,7 @@ func made(
 			Decode: config.Settings(&settings),
 			Store:  store.Dir(cfg.Store).For(name),
 			SSDP:   browsing,
+			MDNS:   multicast,
 		})
 		if err != nil {
 			return nil, fmt.Errorf("the plugin %s: %w", name, err)

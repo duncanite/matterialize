@@ -129,6 +129,11 @@ func TestTheDaemonRunsWhatIsEnabled(t *testing.T) {
 		t.Errorf("the plugin was made with the name %q", kitchen.Name)
 	}
 
+	// It is lent the daemon's means of finding devices.
+	if given.SSDP == nil || given.MDNS == nil {
+		t.Errorf("the plugin was lent SSDP %v and Multicast DNS %v", given.SSDP, given.MDNS)
+	}
+
 	// The store it was made with keeps what it is given.
 	if err := given.Store.Put(ctx, "token", []byte("kept")); err != nil {
 		t.Errorf("keeping a token: %v", err)
@@ -200,6 +205,29 @@ func TestAPluginThatEnds(t *testing.T) {
 
 			<-staying.left
 		})
+	}
+}
+
+// An interface the configuration names that the host does not have is
+// refused by its name, wherever it is named, before anything is opened:
+// misspelt, it would listen nowhere and say nothing.
+func TestAnInterfaceTheHostHasNot(t *testing.T) {
+	t.Parallel()
+
+	_, maker, _ := made(nil)
+
+	for where, name := range map[string]func(*config.Config){
+		"the bridge's": func(cfg *config.Config) { cfg.Bridge.Interface = "nowhere0" },
+		"one for SSDP": func(cfg *config.Config) { cfg.Discover.SSDP = []string{"nowhere0"} },
+		"one for mDNS": func(cfg *config.Config) { cfg.Discover.MDNS = []string{"nowhere0"} },
+	} {
+		cfg := configured(t, "  lights: {name: Kitchen}\n")
+		name(cfg)
+
+		err := daemon.Run(t.Context(), cfg, map[string]plugin.Maker{"lights": maker}, &buffer{})
+		if !errors.Is(err, daemon.ErrNoInterface) || !strings.Contains(err.Error(), `"nowhere0"`) {
+			t.Errorf("%s: %v", where, err)
+		}
 	}
 }
 
