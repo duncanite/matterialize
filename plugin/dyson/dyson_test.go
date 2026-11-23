@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"math"
+	"net/netip"
 	"strconv"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/forkcloser/go-mdns"
+	"github.com/forkcloser/go-mdns/mdnstest"
 
 	godyson "github.com/duncanite/go-dyson/dyson"
 	"github.com/duncanite/go-dyson/dyson/dysontest"
@@ -88,9 +92,67 @@ func keeping(t *testing.T) *memory {
 	return store
 }
 
-// settings is what the daemon hands the plugin: the settings written,
-// and its store.
-func settings(t *testing.T, store plugin.Store, written string) plugin.Settings {
+// announced is a fake as it announces itself on the network: its
+// product type, its serial, and where it listens.
+type announced struct {
+	product string
+	serial  string
+	at      string
+}
+
+// aLink and aHotCool are a fake of each model, as it announces itself.
+func aLink(fake *dysontest.Purifier) announced {
+	return announced{product: "475", serial: dysontest.Serial, at: fake.Addr()}
+}
+
+func aHotCool(fake *dysontest.Purifier) announced {
+	return announced{product: "527", serial: dysontest.HotCoolSerial, at: fake.Addr()}
+}
+
+// announce puts a purifier's announcement on the network, from a host
+// of its own, as a purifier writes it: its service type has an
+// underscore, so it is published record by record. What it returns
+// takes the announcement back, with a goodbye.
+func announce(t *testing.T, network *mdnstest.Network, one announced) (withdraw func()) {
+	t.Helper()
+
+	address := netip.MustParseAddrPort(one.at)
+
+	peer, err := mdns.Open(t.Context(), mdns.Config{Network: network.Host(mdnstest.Port{
+		Interface: "wlan0", Wire: "things", Addrs: []netip.Prefix{netip.PrefixFrom(address.Addr(), 8)},
+	})})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	kind := mdns.Name{"_dyson_mqtt", "_tcp", "local"}
+	instance := append(mdns.Name{one.product + "_" + one.serial}, kind...)
+	host := mdns.Name{"purifier-" + strconv.Itoa(int(address.Port())), "local"}
+
+	if _, err = peer.Publish(t.Context(), mdns.Records{Records: []mdns.Record{
+		{Name: instance, Data: mdns.SRV{Port: address.Port(), Target: host}},
+		{Name: instance, Data: mdns.TXT{}},
+		{Name: host, Data: mdns.Addr{Addr: address.Addr()}},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err = peer.Publish(t.Context(), mdns.Records{
+		Shared: true, Records: []mdns.Record{{Name: kind, Data: mdns.PTR{Target: instance}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	var once sync.Once
+
+	withdraw = func() { once.Do(func() { _ = peer.Close() }) }
+	t.Cleanup(withdraw)
+
+	return withdraw
+}
+
+// decoded is the settings written, as the daemon hands them to be read.
+func decoded(t *testing.T, written string) plugin.Settings {
 	t.Helper()
 
 	read, err := config.Parse([]byte("bridge: {name: Test, state: /state}\nplugins:\n  dyson: " + written + "\n"))
@@ -100,38 +162,59 @@ func settings(t *testing.T, store plugin.Store, written string) plugin.Settings 
 
 	node := read.Plugins["dyson"]
 
-	return plugin.Settings{Decode: config.Settings(&node), Store: store}
+	return plugin.Settings{Decode: config.Settings(&node)}
 }
 
-// aLink and aHotCool are the settings that name a fake of each model,
-// where it is.
-func aLink(fake *dysontest.Purifier) string {
-	return `{serial: ` + dysontest.Serial + `, type: "475", host: "` + fake.Addr() + `"}`
-}
-
-func aHotCool(fake *dysontest.Purifier) string {
-	return `{serial: ` + dysontest.HotCoolSerial + `, type: "527", host: "` + fake.Addr() + `", name: Den}`
-}
-
-// running is the plugin under way against a home.
-type running struct {
-	home  matter.Home
-	ended chan error
-	stop  context.CancelFunc
-}
-
-// run makes the plugin and runs it until the test ends, or until it is
-// stopped.
-func run(t *testing.T, store plugin.Store, written string) *running {
+// settings is what the daemon hands the plugin: the settings written,
+// its store, and the daemon's part in Multicast DNS on a network.
+func settings(t *testing.T, store plugin.Store, network *mdnstest.Network, written string) plugin.Settings {
 	t.Helper()
 
-	made, err := dyson.New(settings(t, store, written))
+	given := decoded(t, written)
+
+	peer, err := mdns.Open(t.Context(), mdns.Config{
+		Network: network.Host(mdnstest.Port{Interface: "en0", Wire: "things"}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(func() { _ = peer.Close() })
+
+	given.Store, given.MDNS = store, peer
+
+	return given
+}
+
+// running is the plugin under way against a home, on a network.
+type running struct {
+	home    matter.Home
+	network *mdnstest.Network
+	ended   chan error
+	stop    context.CancelFunc
+	// withdraw takes back the announcement of each purifier it was run
+	// with, in their order.
+	withdraw []func()
+}
+
+// run makes the plugin and runs it, on a network where the purifiers
+// given announce themselves, until the test ends or it is stopped.
+func run(t *testing.T, store plugin.Store, written string, purifiers ...announced) *running {
+	t.Helper()
+
+	started := &running{network: &mdnstest.Network{}, ended: make(chan error, 1)}
+
+	for _, one := range purifiers {
+		started.withdraw = append(started.withdraw, announce(t, started.network, one))
+	}
+
+	made, err := dyson.New(settings(t, store, started.network, written))
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	ctx, stop := context.WithCancel(t.Context())
-	started := &running{ended: make(chan error, 1), stop: stop}
+	started.stop = stop
 
 	go func() { started.ended <- made.Run(ctx, &started.home) }()
 
@@ -148,10 +231,10 @@ func run(t *testing.T, store plugin.Store, written string) *running {
 
 // follows runs the plugin for one fake, asked what it reads once an
 // hour: what a test has the fake say of its sensors stays said.
-func follows(t *testing.T, purifier string) *running {
+func follows(t *testing.T, purifier announced) *running {
 	t.Helper()
 
-	return run(t, keeping(t), "{every: 1h, purifiers: ["+purifier+"]}")
+	return run(t, keeping(t), "{every: 1h}", purifier)
 }
 
 // eventually waits for the home to hold what a test expects of a
@@ -263,7 +346,7 @@ func TestAHotCool(t *testing.T) {
 
 	now, _ := started.home.Device(hotCool)
 
-	if now.Kind != matter.AirPurifier || now.Name != "Den" || now.Model != "Dyson Pure Hot+Cool" ||
+	if now.Kind != matter.AirPurifier || now.Name != "Dyson Pure Hot+Cool" || now.Model != "Dyson Pure Hot+Cool" ||
 		now.Serial != dysontest.HotCoolSerial {
 		t.Errorf("the purifier is described as %+v", now.Info)
 	}
@@ -511,7 +594,7 @@ func TestAFilterThatSaysNoMore(t *testing.T) {
 
 	now, _ := started.home.Device(hotCool)
 
-	if now.Name != "Den" || now.FanControl.Speed != 0.8 || !near(now.Temperature.Celsius, 21.85) ||
+	if now.Name != "Dyson Pure Hot+Cool" || now.FanControl.Speed != 0.8 || !near(now.Temperature.Celsius, 21.85) ||
 		!near(now.Humidity.Percent, 45) || !near(now.AirQuality.PM25.Micrograms, 7) ||
 		now.AirQuality.Quality != matter.QualityGood || math.Abs(now.Heater.Target-20.8) > 1e-6 || now.Unreachable {
 		t.Errorf("put anew, the purifier is %+v, its fan %+v, its air %+v, its heater %+v",
@@ -631,7 +714,7 @@ func TestAPurifierIsAskedAgain(t *testing.T) {
 	fake := dysontest.New()
 	t.Cleanup(fake.Close)
 
-	started := run(t, keeping(t), "{every: 50ms, purifiers: ["+aLink(fake)+"]}")
+	started := run(t, keeping(t), "{every: 50ms}", aLink(fake))
 	read(t, started, link)
 
 	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(10 * time.Millisecond) {
@@ -663,7 +746,7 @@ func TestAPurifierWithNoCredential(t *testing.T) {
 	t.Cleanup(fake.Close)
 
 	store := &memory{}
-	started := run(t, store, "{retry: 50ms, purifiers: ["+aLink(fake)+"]}")
+	started := run(t, store, "{retry: 50ms}", aLink(fake))
 
 	time.Sleep(500 * time.Millisecond)
 
@@ -691,7 +774,7 @@ func TestAPurifierThatRefuses(t *testing.T) {
 	store := &memory{}
 	_ = store.Put(t.Context(), dysontest.Serial, []byte("not its credential"))
 
-	started := run(t, store, "{retry: 50ms, purifiers: ["+aLink(fake)+"]}")
+	started := run(t, store, "{retry: 50ms}", aLink(fake))
 
 	for deadline := time.Now().Add(10 * time.Second); len(fake.Hellos()) < 3; time.Sleep(10 * time.Millisecond) {
 		if time.Now().After(deadline) {
@@ -712,7 +795,7 @@ func TestAPurifierThatGoes(t *testing.T) {
 	fake := dysontest.New()
 	t.Cleanup(fake.Close)
 
-	started := run(t, keeping(t), "{retry: 50ms, every: 1h, purifiers: ["+aLink(fake)+"]}")
+	started := run(t, keeping(t), "{retry: 50ms, every: 1h}", aLink(fake))
 	read(t, started, link)
 
 	// Unreachable, then not: the purifier is dialled again a moment after
@@ -783,43 +866,149 @@ func TestThePluginStops(t *testing.T) {
 	}
 }
 
-// Settings that name a purifier whole are settings; ones that do not
-// are refused.
+// TestSettings: settings that say nothing are settings, and name no
+// purifier; ones that cannot be read are refused, the keys that named a
+// purifier among them.
 func TestSettings(t *testing.T) {
 	t.Parallel()
 
-	const one = `{serial: A1, type: "475", host: 192.0.2.1}`
+	for _, written := range []string{"", "{}", "{retry: 3s}", "{every: 1m}", "{retry: 3s, every: 1m}"} {
+		if _, err := dyson.New(decoded(t, written)); err != nil {
+			t.Errorf("settings %q: %v", written, err)
+		}
+	}
 
-	for _, written := range []string{
-		"{purifiers: [" + one + "]}",
-		"{retry: 3s, every: 1m, purifiers: [" + one + `, {serial: B2, type: 527E, host: "192.0.2.2:1883", name: Den}]}`,
-	} {
-		if _, err := dyson.New(settings(t, nil, written)); err != nil {
+	for _, written := range []string{"{retry: soon}", "{retry: 0s}", "{every: -1s}", "{every: 0s}"} {
+		if _, err := dyson.New(decoded(t, written)); !errors.Is(err, plugin.ErrSettings) {
 			t.Errorf("settings %q: %v", written, err)
 		}
 	}
 
 	for _, written := range []string{
-		"", "{}", "{purifiers: []}",
-		"{retry: soon, purifiers: [" + one + "]}", "{every: -1s, purifiers: [" + one + "]}",
-		"{every: 0s, purifiers: [" + one + "]}",
-		`{purifiers: [{type: "475", host: 192.0.2.1}]}`,
-		`{purifiers: [{serial: A1, host: 192.0.2.1}]}`,
-		`{purifiers: [{serial: A1, type: "475"}]}`,
-		`{purifiers: [{serial: A1, type: "520", host: 192.0.2.1}]}`,
-		`{purifiers: [{serial: A1, type: "527Z", host: 192.0.2.1}]}`,
-		`{purifiers: [{serial: ../A1, type: "475", host: 192.0.2.1}]}`,
-		`{purifiers: [{serial: A 1, type: "475", host: 192.0.2.1}]}`,
-		"{purifiers: [" + one + ", " + one + "]}",
+		"{purifiers: []}", `{purifiers: [{serial: A1, type: "475", host: 192.0.2.1}]}`,
+		"{serial: A1}", `{type: "475"}`, "{host: 192.0.2.1}", "{name: Den}",
 	} {
-		if _, err := dyson.New(settings(t, nil, written)); !errors.Is(err, plugin.ErrSettings) {
+		if _, err := dyson.New(decoded(t, written)); !errors.Is(err, config.ErrInvalid) {
 			t.Errorf("settings %q: %v", written, err)
 		}
 	}
+}
 
-	for _, written := range []string{"{host: 192.0.2.1}", "{purifiers: [{serial: A1, port: 1883}]}"} {
-		if _, err := dyson.New(settings(t, nil, written)); !errors.Is(err, config.ErrInvalid) {
-			t.Errorf("settings %q: %v", written, err)
-		}
+// TestAPurifierThatMoves: a purifier that announces another address is
+// followed there.
+func TestAPurifierThatMoves(t *testing.T) {
+	t.Parallel()
+
+	first, second := dysontest.New(), dysontest.New()
+	t.Cleanup(first.Close)
+	t.Cleanup(second.Close)
+
+	started := follows(t, aLink(first))
+
+	eventually(t, &started.home, link, "the purifier where it first is", func(matter.Device) bool { return true })
+
+	started.withdraw[0]()
+
+	eventually(t, &started.home, link, "the purifier gone from where it was", func(now matter.Device) bool {
+		return now.Unreachable
+	})
+
+	announce(t, started.network, aLink(second))
+
+	eventually(t, &started.home, link, "the purifier where it now is", func(now matter.Device) bool {
+		return !now.Unreachable
+	})
+
+	if len(second.Hellos()) == 0 {
+		t.Fatal("where the purifier now is, it was not opened")
+	}
+}
+
+// TestAPurifierThatIsAnnouncedNoMore: a purifier whose announcement
+// goes is unreachable in the home, and stays in it; announced again, it
+// is reachable.
+func TestAPurifierThatIsAnnouncedNoMore(t *testing.T) {
+	t.Parallel()
+
+	fake := dysontest.New()
+	t.Cleanup(fake.Close)
+
+	started := run(t, keeping(t), "{retry: 1h, every: 1h}", aLink(fake))
+
+	eventually(t, &started.home, link, "the purifier", func(matter.Device) bool { return true })
+
+	started.withdraw[0]()
+
+	eventually(t, &started.home, link, "the purifier announced no more", func(now matter.Device) bool {
+		return now.Unreachable
+	})
+
+	announce(t, started.network, aLink(fake))
+
+	eventually(t, &started.home, link, "the purifier announced again", func(now matter.Device) bool {
+		return !now.Unreachable
+	})
+}
+
+// TestWhatIsLeftAlone: what announces itself as a purifier of a type
+// the plugin does not serve is not opened and not put, whatever the
+// store holds under its serial; one beside it is served.
+func TestWhatIsLeftAlone(t *testing.T) {
+	t.Parallel()
+
+	const another = "ZZ9-US-OTHER000A"
+
+	served, other := dysontest.New(), dysontest.New()
+	t.Cleanup(served.Close)
+	t.Cleanup(other.Close)
+
+	store := keeping(t)
+	_ = store.Put(t.Context(), another, credential(t, dysontest.SSID, dysontest.WiFiPassword))
+
+	started := run(t, store, "{retry: 50ms, every: 1h}",
+		announced{product: "520", serial: another, at: other.Addr()},
+		aLink(served),
+	)
+
+	eventually(t, &started.home, link, "the purifier beside it", func(matter.Device) bool { return true })
+
+	time.Sleep(500 * time.Millisecond)
+
+	if all, _ := started.home.Devices(t.Context()); len(all) != 1 {
+		t.Fatalf("the home holds %d devices", len(all))
+	}
+
+	if opened := len(other.Hellos()); opened != 0 {
+		t.Fatalf("what is left alone was opened %d times", opened)
+	}
+}
+
+// errGone is why a network can be browsed no more.
+var errGone = errors.New("the last link broke")
+
+// broken is a part in Multicast DNS that can browse no more.
+type broken struct{}
+
+func (broken) Browse(context.Context, mdns.Query, func(mdns.Change, mdns.Instance)) error {
+	return errGone
+}
+
+// TestANetworkThatIsGone: a network that can be browsed no more ends the
+// plugin, with why.
+func TestANetworkThatIsGone(t *testing.T) {
+	t.Parallel()
+
+	given := decoded(t, "{}")
+	given.Store, given.MDNS = keeping(t), broken{}
+
+	made, err := dyson.New(given)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var home matter.Home
+
+	if err = made.Run(t.Context(), &home); !errors.Is(err, errGone) {
+		t.Fatalf("the plugin ended with %v", err)
 	}
 }

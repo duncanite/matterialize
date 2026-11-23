@@ -1,8 +1,9 @@
 // Package dyson is the plugin for Dyson's purifiers of two generations,
-// the Pure Cool Link and the Pure Hot+Cool: each one the settings name,
+// the Pure Cool Link and the Pure Hot+Cool: every one that announces
+// itself on the local network and whose credential the plugin holds,
 // written into the home as an air purifier and kept as it says it is.
 //
-// Its settings:
+// Its settings, every one of which may be left out:
 //
 //	dyson:
 //	  # How long before a purifier that does not answer is reached for
@@ -11,21 +12,24 @@
 //	  # How often each purifier is asked what its sensors read. Left out,
 //	  # thirty seconds.
 //	  every: 30s
-//	  purifiers:
-//	    - serial: NN2-US-HKA0000A
-//	      # Its product type: 475 a Pure Cool Link, 527 a Pure Hot+Cool.
-//	      type: "475"
-//	      # Its address, with or without a port.
-//	      host: 192.0.2.30
-//	      # What a controller shows for it. Left out, the model's name.
-//	      name: Bedroom purifier
 //
-// A purifier is opened by a credential of its own, which is not on the
-// network. The plugin reads it from its store, under the purifier's
-// serial: the string go-dyson's "dyson account" prints as
-// DYSON_CREDENTIAL. A purifier whose credential is not there is said in
-// the log and reached for again: put the credential there and it is
-// served, with no restart.
+// Nothing in the settings names a purifier, or where one is. A purifier
+// announces itself over Multicast DNS, with its serial and its product
+// type in its name; the plugin hears it through the daemon's part in
+// Multicast DNS, where the daemon's configuration has plugins listen,
+// and dials it at the address it announces.
+//
+// An announcement is anyone's to make, and proves nothing: whatever
+// announces itself under a purifier's serial is dialled, and offered
+// that purifier's credential, which a purifier's own protocol sends as
+// it is. What opens a purifier is that credential, which is not on the
+// network until then: the
+// plugin reads it from its store, under the purifier's serial, the
+// string go-dyson's "dyson account" prints as DYSON_CREDENTIAL beside
+// that serial. A purifier whose credential is not there is found, said
+// in the log, and not served: put the credential there and it is, with
+// no restart. A serial is whatever the network says, and one the store
+// would not keep anything under is left alone.
 //
 // What a purifier reads of the air is bridged where it has a unit:
 // the temperature, the humidity, and for a Hot+Cool the particles by
@@ -45,10 +49,14 @@ import (
 	"fmt"
 	"log/slog"
 	"math"
+	"net/netip"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/forkcloser/go-mdns"
 
 	"github.com/duncanite/go-dyson/dyson"
 	"github.com/duncanite/go-matter"
@@ -88,6 +96,10 @@ const (
 	veryPoorTo = 225.4
 )
 
+// errNowhere is a purifier that answered at none of the places it
+// announces.
+var errNowhere = errors.New("it answers nowhere it says it is")
+
 // errNoCredential is a purifier the store holds no credential for.
 var errNoCredential = errors.New("the store holds no credential for it")
 
@@ -97,30 +109,37 @@ var stored = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]*$`)
 
 // settings is the plugin's, as the configuration writes them.
 type settings struct {
-	Retry     string     `yaml:"retry"`
-	Every     string     `yaml:"every"`
-	Purifiers []purifier `yaml:"purifiers"`
+	Retry string `yaml:"retry"`
+	Every string `yaml:"every"`
 }
 
-// purifier is one purifier, as the configuration names it.
+// purifier is one purifier, as it announces itself: who it says it is,
+// and where.
 type purifier struct {
-	Serial string `yaml:"serial"`
-	Type   string `yaml:"type"`
-	Host   string `yaml:"host"`
-	Name   string `yaml:"name"`
+	Serial string
+	Type   string
+	At     []netip.AddrPort
 }
 
 // served is the plugin, made.
 type served struct {
-	store     plugin.Store
-	retry     time.Duration
-	every     time.Duration
-	purifiers []purifier
+	store plugin.Store
+	mdns  plugin.MDNS
+	retry time.Duration
+	every time.Duration
 
 	mu sync.Mutex
 	// dialled is each purifier as it was last dialled, which a device's
 	// commands go to: a connection ends, and the device stays.
 	dialled map[string]*dyson.Purifier
+}
+
+// followed is one purifier being kept in the home, where it was last
+// said to be.
+type followed struct {
+	at   []netip.AddrPort
+	stop context.CancelFunc
+	done chan struct{}
 }
 
 // New makes the plugin from its settings: it is the Maker to enable
@@ -142,39 +161,8 @@ func New(given plugin.Settings) (plugin.Plugin, error) {
 		return nil, err
 	}
 
-	if len(read.Purifiers) == 0 {
-		return nil, fmt.Errorf("%w: it names no purifier", plugin.ErrSettings)
-	}
-
-	named := map[string]bool{}
-
-	for _, one := range read.Purifiers {
-		switch {
-		case one.Serial == "" || one.Type == "" || one.Host == "":
-			return nil, fmt.Errorf("%w: a purifier has a serial, a type and a host, each", plugin.ErrSettings)
-		case !stored.MatchString(one.Serial):
-			return nil, fmt.Errorf(
-				"%w: %q is no serial the store keeps a credential under",
-				plugin.ErrSettings,
-				one.Serial,
-			)
-		case modelOf(one.Type) == "":
-			return nil, fmt.Errorf(
-				"%w: %q is no product type this plugin serves; it serves %s, the Pure Cool Link, and %s, the Pure Hot+Cool",
-				plugin.ErrSettings,
-				one.Type,
-				dyson.PureCoolLink,
-				dyson.PureHotCool,
-			)
-		case named[one.Serial]:
-			return nil, fmt.Errorf("%w: the purifier %s is named twice", plugin.ErrSettings, one.Serial)
-		}
-
-		named[one.Serial] = true
-	}
-
 	return &served{
-		store: given.Store, retry: retry, every: every, purifiers: read.Purifiers,
+		store: given.Store, mdns: given.MDNS, retry: retry, every: every,
 		dialled: map[string]*dyson.Purifier{},
 	}, nil
 }
@@ -212,19 +200,110 @@ func modelOf(product string) string {
 // after the Link's.
 func weighs(product string) bool { return product != dyson.PureCoolLink }
 
-// Run is Plugin's. It ends with ctx and with nothing else: a purifier
-// that cannot be reached, or that goes, is unreachable in the home until
-// it answers again.
+// Run is Plugin's. It ends with ctx, and sooner only when the network
+// can be browsed no more: a purifier that cannot be reached, or that
+// goes, is unreachable in the home until it is there again.
 func (s *served) Run(ctx context.Context, home *matter.Home) error {
-	var following sync.WaitGroup
+	running, stop := context.WithCancel(ctx)
+	following := map[string]*followed{}
 
-	for _, one := range s.purifiers {
-		following.Go(func() { s.follow(ctx, home, one) })
+	defer func() {
+		stop()
+
+		for _, one := range following {
+			<-one.done
+		}
+	}()
+
+	// left is why a purifier that announces itself is left alone, for as
+	// long as it is: said once, not each time it is told of.
+	left := map[string]string{}
+
+	err := dyson.Find(running, lent{s.mdns}, func(found dyson.Found, lost bool) {
+		s.told(running, home, following, left, found, lost)
+	})
+
+	if ctx.Err() != nil {
+		// Stopped: what the browsing ended with is not the plugin's to say.
+		return nil
 	}
 
-	following.Wait()
+	return fmt.Errorf("finding Dyson purifiers: %w", err)
+}
 
-	return nil
+// told is what the network says of one purifier: that it is there, and
+// where, or that it is gone. One that is new, or that is somewhere
+// else, is followed from where it now is; one that is gone is followed
+// no more, and stays in the home, unreachable.
+func (s *served) told(
+	ctx context.Context, home *matter.Home, following map[string]*followed, left map[string]string,
+	found dyson.Found, lost bool,
+) {
+	was, known := following[found.Serial]
+
+	// Told of again where it already is: nothing of it moved. An
+	// announcement says where a purifier is a moment after it says who,
+	// and until then there is nowhere to dial.
+	if !lost && (len(found.Addresses) == 0 || known && slices.Equal(was.at, found.Addresses)) {
+		return
+	}
+
+	if known {
+		was.stop()
+		<-was.done
+		delete(following, found.Serial)
+	}
+
+	if lost {
+		delete(left, found.Serial)
+
+		return
+	}
+
+	if why := unserved(found); why != "" {
+		if left[found.Serial] != why {
+			slog.InfoContext(ctx, "a Dyson purifier is found, and left alone", "type", found.Type, "why", why)
+		}
+
+		left[found.Serial] = why
+
+		return
+	}
+
+	following[found.Serial] = s.start(ctx, home, purifier{
+		Serial: found.Serial, Type: found.Type, At: slices.Clone(found.Addresses),
+	})
+}
+
+// unserved is why a purifier that announces itself is not one the
+// plugin serves, and nothing for one it does. Its serial is whatever
+// the network says: one the store would keep nothing under is no name
+// to look a credential up by, and none to name a device with.
+func unserved(found dyson.Found) string {
+	switch {
+	case !stored.MatchString(found.Serial):
+		return "its serial is no name the store keeps a credential under"
+	case modelOf(found.Type) == "":
+		return "it is of no product type this plugin serves"
+	default:
+		return ""
+	}
+}
+
+// start follows a purifier on a goroutine of its own, until it is
+// stopped.
+func (s *served) start(ctx context.Context, home *matter.Home, one purifier) *followed {
+	following, stop := context.WithCancel(ctx)
+	kept := &followed{at: one.At, stop: stop, done: make(chan struct{})}
+
+	go func() {
+		defer close(kept.done)
+		defer stop()
+
+		s.follow(following, home, one)
+	}()
+
+	return kept
 }
 
 // follow keeps a purifier in the home for as long as ctx lasts: read
@@ -286,11 +365,26 @@ func (s *served) connected(ctx context.Context, home *matter.Home, one purifier,
 		return fmt.Errorf("reading its credential from the store: %w", err)
 	}
 
-	opened, err := dyson.Dial(ctx, one.Host, dyson.Identity{
+	identity := dyson.Identity{
 		Serial: one.Serial, Type: one.Type, Credential: strings.TrimSpace(string(credential)),
-	})
-	if err != nil {
-		return fmt.Errorf("dialling it: %w", err)
+	}
+
+	// The first of the places it announces that answers.
+	var opened *dyson.Purifier
+
+	for _, place := range one.At {
+		dialled, failed := dyson.Dial(ctx, place.String(), identity)
+		if failed == nil {
+			opened = dialled
+
+			break
+		}
+
+		err = errors.Join(err, fmt.Errorf("dialling it at %s: %w", place, failed))
+	}
+
+	if opened == nil {
+		return errors.Join(errNowhere, err)
 	}
 
 	defer func() { _ = opened.Close() }()
@@ -517,10 +611,6 @@ func (s *served) describe(one purifier, state *dyson.State) matter.Device {
 	described.ID, described.Kind = idOf(one.Serial), matter.AirPurifier
 	described.Name, described.Vendor, described.Model, described.Serial = model, "Dyson", model, one.Serial
 
-	if one.Name != "" {
-		described.Name = one.Name
-	}
-
 	now := func() *dyson.Purifier {
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -674,6 +764,23 @@ func qualityOf(fine *float64) matter.Quality {
 	default:
 		return matter.QualityExtremelyPoor
 	}
+}
+
+// lent is the daemon's Multicast DNS as go-dyson asks for the means of
+// finding purifiers.
+type lent struct {
+	mdns plugin.MDNS
+}
+
+func (l lent) Browse(ctx context.Context, service string, handle func(dyson.Advertisement, bool)) error {
+	return l.mdns.Browse(ctx, mdns.Query{Type: service}, func(change mdns.Change, heard mdns.Instance) {
+		addresses := make([]netip.AddrPort, 0, len(heard.Addrs))
+		for _, at := range heard.Addrs {
+			addresses = append(addresses, netip.AddrPortFrom(at, heard.Port))
+		}
+
+		handle(dyson.Advertisement{Instance: heard.Name, Addresses: addresses}, change == mdns.Lost)
+	})
 }
 
 // idOf is a purifier's ID in the home: the plugin's name first, so that
