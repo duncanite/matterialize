@@ -14,6 +14,7 @@ import (
 	"github.com/duncanite/matterialize/internal/config"
 	"github.com/duncanite/matterialize/internal/daemon"
 	"github.com/duncanite/matterialize/plugin"
+	"github.com/duncanite/matterialize/plugin/dyson"
 	"github.com/duncanite/matterialize/plugin/lutron"
 	"github.com/duncanite/matterialize/plugin/wemo"
 )
@@ -24,7 +25,7 @@ var errUsage = errors.New("usage: matterialize CONFIG")
 // makers is the plugins this build has, by the name the configuration
 // enables each under.
 func makers() map[string]plugin.Maker {
-	return map[string]plugin.Maker{"lutron": lutron.New, "wemo": wemo.New}
+	return map[string]plugin.Maker{"dyson": dyson.New, "lutron": lutron.New, "wemo": wemo.New}
 }
 
 func main() {

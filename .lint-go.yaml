@@ -82,6 +82,7 @@ golangci:
             # lends them, the YAML the configuration is written in, and
             # the library files and processes are handled with.
             allow:
+              - github.com/duncanite/go-dyson
               - github.com/duncanite/go-lutron
               - github.com/duncanite/go-matter
               - github.com/duncanite/go-wemo
@@ -111,8 +112,15 @@ licenses:
   # second clause, which the baseline accepts whole. The checker reports it
   # under the name of another text of the same words, uthash's. It comes
   # with go-matter, for the elliptic curve of Matter's handshakes.
+  #
+  # Eclipse Paho is offered under the EPL-2.0 or the EDL-1.0, at the
+  # taker's choice, and the EDL-1.0 is the BSD-3-Clause's text, which the
+  # baseline accepts; go-licenses reads its file as EPL-2.0 alone. It comes
+  # with go-dyson, which speaks MQTT to a purifier's own broker through it,
+  # and is taken here as it is taken there.
   ignore:
     - filippo.io/nistec/internal/fiat
+    - github.com/eclipse/paho.mqtt.golang
 
 # The daemon is run from an image, which is built in a change of its own:
 # no release ships a binary of it yet. It moves to .release-go.yaml's builds

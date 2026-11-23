@@ -5,7 +5,8 @@ A daemon that makes the devices of a home that do not speak
 bridge, behind which each maker's devices appear to any Matter controller that is
 invited to it, whatever its ecosystem, several at once.
 
-The daemon is built, with two plugins: [Lutron Caséta](#lutron) and [Wemo](#wemo).
+The daemon is built, with three plugins: [Lutron Caséta](#lutron), [Wemo](#wemo) and
+[Dyson](#dyson).
 
 ```bash
 matterialize /etc/matterialize/config.yaml
@@ -142,6 +143,71 @@ itself. A plug renamed keeps the name it had until the daemon is started again.
 
 **A plug has no credential.** Whatever advertises itself as a plug on the local network,
 and describes itself as that plug where it says it is, is served as one.
+
+### Dyson
+
+Dyson's purifiers of two generations, the Pure Cool Link and the Pure Hot+Cool: each one
+the configuration names, an air purifier with its fan, what it reads of the air, its
+filters and, for a Hot+Cool, its heater.
+
+```yaml
+plugins:
+  dyson:
+    # How long before a purifier that does not answer is reached for again. Left
+    # out, ten seconds.
+    retry: 10s
+    # How often each purifier is asked what its sensors read. Left out, thirty
+    # seconds.
+    every: 30s
+    purifiers:
+      - serial: NN2-US-HKA0000A
+        # Its product type: 475 a Pure Cool Link, 527 a Pure Hot+Cool.
+        type: "475"
+        # Its address, with or without a port.
+        host: 192.0.2.30
+        # What a controller shows for it. Left out, the model's name.
+        name: Bedroom purifier
+```
+
+**A purifier is opened by a credential of its own**, which is not on the network and not
+in the configuration. The plugin reads it from the store, as `dyson/` and the purifier's
+serial: one line, the string [go-dyson](https://github.com/duncanite/go-dyson)'s
+`dyson account` prints for that purifier as `DYSON_CREDENTIAL`. A purifier whose
+credential is not there is said in the log and reached for again: put the file there and
+the purifier is served, with no restart.
+
+A purifier is at the address the configuration gives. Finding purifiers by themselves,
+over mDNS, comes with the daemon lending its plugins mDNS as it lends them SSDP.
+
+What is served of each:
+
+- **The fan**: off, on at one of its ten speeds, or left to the purifier; whether it
+  turns from side to side; and its night mode, as a fan's sleep mode.
+- **The temperature and the humidity** it reads.
+- **Its filters**, with whether each is to be replaced. A Hot+Cool's two, HEPA and
+  carbon, say how much of each is left, for as long as the purifier says it. A Link's
+  one counts hours of a life that is not known, and says only when it is due: with no
+  hour left, or when the purifier warns.
+- **For a Hot+Cool, the air**: the fine and the coarse particles it weighs, in micrograms
+  a cubic metre, and how clean that makes the air, good to extremely poor. That last is
+  the plugin's own reading of the fine particles, by the breakpoints the United States'
+  Environmental Protection Agency has for a day's average of PM2.5, as revised in 2024:
+  good to 9.0, fair to 35.4, moderate to 55.4, poor to 125.4, very poor to 225.4, and
+  extremely poor above. A reading of 999 is taken for a sensor that reads nothing.
+- **For a Hot+Cool, the heater**: set to heat or not, the temperature it heats to, and
+  whether it heats now.
+
+**Not served**: a purifier's indices of volatile compounds and of nitrogen dioxide, and
+a Link's index of particles. They have no unit, and the scale of none is known; a number
+that says nothing is not put before a controller. So a Link says nothing of how clean the
+air is. The sleep timer is not served either: Matter has no word for it.
+
+A purifier is not known to say what its sensors read unless it is asked, so it is asked
+again and again; what its fan, its filters and its heater do, it says as it happens.
+
+**A purifier that goes is unreachable, and stays in the home**; reached again, it is as
+it then says. Why it is not there is said in the log once, and again when the reason
+changes, not at every try.
 
 It is built on [go-matter](https://github.com/duncanite/go-matter), which is the
 vocabulary of devices and the bridge itself.
