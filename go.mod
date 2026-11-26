@@ -3,7 +3,7 @@ module github.com/duncanite/matterialize
 go 1.27.4
 
 require (
-	github.com/duncanite/go-dyson v0.0.0-20261123022015-7ae6823b7dcd
+	github.com/duncanite/go-dyson v0.0.0-20261126035101-a9df4771096f
 	github.com/duncanite/go-lutron v0.0.0-20261118045756-df5dc3512ca1
 	github.com/duncanite/go-matter v0.0.0-20261123072004-ee42190861da
 	github.com/duncanite/go-wemo v0.2.1-0.20261122100510-d4af43bc3adb

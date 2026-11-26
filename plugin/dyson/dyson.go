@@ -182,17 +182,14 @@ func lasting(setting, written string, otherwise time.Duration) (time.Duration, e
 	return given, nil
 }
 
-// modelOf is what a product type is called, and nothing for one this
-// plugin does not serve: the types go-dyson speaks.
+// modelOf is what a product type go-dyson speaks is called: the Link, or
+// the generation after it.
 func modelOf(product string) string {
-	switch product {
-	case dyson.PureCoolLink:
+	if product == dyson.PureCoolLink {
 		return "Dyson Pure Cool Link"
-	case dyson.PureHotCool, dyson.PureHotCool + "E", dyson.PureHotCool + "K", dyson.PureHotCool + "M":
-		return "Dyson Pure Hot+Cool"
-	default:
-		return ""
 	}
+
+	return "Dyson Pure Hot+Cool"
 }
 
 // weighs says whether a product type reads particles by weight, has two
@@ -283,7 +280,7 @@ func unserved(found dyson.Found) string {
 	switch {
 	case !stored.MatchString(found.Serial):
 		return "its serial is no name the store keeps a credential under"
-	case modelOf(found.Type) == "":
+	case !dyson.Speaks(found.Type):
 		return "it is of no product type this plugin serves"
 	default:
 		return ""
