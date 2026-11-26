@@ -4,8 +4,8 @@ github.com/SukramJ/go-fabric v0.23.0 h1:FmLvYkSpmXMgYGGXs+S4y8rpg6xMZhQr1xj2BkEy
 github.com/SukramJ/go-fabric v0.23.0/go.mod h1:sonXJfocMorsghjOG4Gn4nQ9G+YdCqF6Q11UTGEG9JA=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc h1:U9qPSI2PIWSS1VwoXQT9A3Wy9MM3WgvqSxFWenqJduM=
 github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/duncanite/go-dyson v0.0.0-20261123022015-7ae6823b7dcd h1:pavy8yfeBo6s3f5kXexiYw292auNgVcMctETCvF16u8=
-github.com/duncanite/go-dyson v0.0.0-20261123022015-7ae6823b7dcd/go.mod h1:Tq2LGoYy+nNDdYSp6wEY7jCxGoXdL5++dqNEV7SEIQk=
+github.com/duncanite/go-dyson v0.0.0-20261126035101-a9df4771096f h1:u0DqFOB84b/Gdn6JMJ+bEZwLkh7Am5ept6o3H1ZRaB8=
+github.com/duncanite/go-dyson v0.0.0-20261126035101-a9df4771096f/go.mod h1:vV63voqQFtFdB/akkRZVlLZgYPrYRgMFC39BJbX+tA0=
 github.com/duncanite/go-lutron v0.0.0-20261118045756-df5dc3512ca1 h1:5pIfbBxsl04Ma7NbuXYFzB6zLarHZbZkhE0g7fATMww=
 github.com/duncanite/go-lutron v0.0.0-20261118045756-df5dc3512ca1/go.mod h1:U+i9z+iT0Eo9QdGupIdGdr7IeXsCOlsZBLypJ/JIzW4=
 github.com/duncanite/go-matter v0.0.0-20261123072004-ee42190861da h1:SgFrH3ujkqYh9lVT4clnqiuL1cFWNkV7Peh4hS4oYB0=
