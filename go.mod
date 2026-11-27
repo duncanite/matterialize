@@ -7,7 +7,7 @@ require (
 	github.com/duncanite/go-lutron v0.0.0-20261118045756-df5dc3512ca1
 	github.com/duncanite/go-matter v0.0.0-20261123072004-ee42190861da
 	github.com/duncanite/go-wemo v0.2.1-0.20261122100510-d4af43bc3adb
-	github.com/forkcloser/go-mdns v0.0.0-20261116031615-ee1ffba2ede5
+	github.com/forkcloser/go-mdns v0.0.0-20261127084458-51c914647b2a
 	github.com/forkcloser/go-upnp v0.0.0-20261122055639-67c71c6ca7ec
 	github.com/mycophonic/primordium v0.15.1
 	go.yaml.in/yaml/v4 v4.0.0

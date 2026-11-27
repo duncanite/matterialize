@@ -18,8 +18,8 @@ github.com/eclipse/paho.mqtt.golang v1.5.1 h1:/VSOv3oDLlpqR2Epjn1Q7b2bSTplJIeV2I
 github.com/eclipse/paho.mqtt.golang v1.5.1/go.mod h1:1/yJCneuyOoCOzKSsOTUc0AJfpsItBGWvYpBLimhArU=
 github.com/forkcloser/blake3 v1.1.0 h1:E0tWTfoLiGurJrwvBcrrkiy1iAE80SX4WHx0BSyUOR8=
 github.com/forkcloser/blake3 v1.1.0/go.mod h1:BLJuiWNe+8WVt0HUpv4WA/Dc/QXXg9WvENESubhOuGQ=
-github.com/forkcloser/go-mdns v0.0.0-20261116031615-ee1ffba2ede5 h1:RcuEsTR+NgsF9IIzcosEFNn06g/ibJemqjUUrGMFBC8=
-github.com/forkcloser/go-mdns v0.0.0-20261116031615-ee1ffba2ede5/go.mod h1:ptLY3Wyxil+mWT1uekRjQkEYO5OXbIwSnr4hUpr4zdE=
+github.com/forkcloser/go-mdns v0.0.0-20261127084458-51c914647b2a h1:HGRafCBzaiNdbaAdahnQVfQoYHnL67X17fDy1QutNzE=
+github.com/forkcloser/go-mdns v0.0.0-20261127084458-51c914647b2a/go.mod h1:9AhtFxqTcLkFGJdwyraNEvb5LqxUBocHUEebju8i9UM=
 github.com/forkcloser/go-upnp v0.0.0-20261122055639-67c71c6ca7ec h1:wqQNzI5EUY0vow1t7bkrx0ya9vBlbj/h6vCRGPYjLUo=
 github.com/forkcloser/go-upnp v0.0.0-20261122055639-67c71c6ca7ec/go.mod h1:UD4KNnfvu9sTeRJx+jZyXL7YEixECNe7pa+XFdqbwik=
 github.com/forkcloser/xos v0.1.2 h1:7TTH/bJ8hRIBIJPZp5WgIY//bgJFlyd+dpsgSEjnwOM=
